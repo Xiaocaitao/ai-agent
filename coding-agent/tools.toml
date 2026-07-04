@@ -1,0 +1,16 @@
+tools = []
+
+# 注册示例：
+# [[tools]]
+# name = "read_file"
+# module = "tools"
+# function = "read_file"
+# description = "读取文本文件"
+# enabled = true
+# [tools.parameters]
+# type = "object"
+# required = ["path"]
+# additionalProperties = false
+# [tools.parameters.properties.path]
+# type = "string"
+# description = "文件路径"

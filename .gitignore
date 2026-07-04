@@ -1,0 +1,6 @@
+.DS_Store
+__pycache__/
+.venv/
+/output/
+/tmp/
+/coding-agent/config.toml
