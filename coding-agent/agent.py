@@ -17,6 +17,13 @@ def _read_toml(path):
         raise ValueError(f"无法读取配置文件 {path.name}: {error}") from error
 
 
+def _read_json(path):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(f"无法读取配置文件 {path.name}: {error}") from error
+
+
 def load_runtime(root=BASE_DIR):
     root = Path(root)
     config = _read_toml(root / "config.toml")
@@ -50,7 +57,7 @@ def load_runtime(root=BASE_DIR):
 
 
 def load_tools(root=BASE_DIR):
-    entries = _read_toml(Path(root) / "tools.toml").get("tools", [])
+    entries = _read_json(Path(root) / "tools.json").get("tools", [])
     specs = []
     handlers = {}
     for entry in entries:

@@ -91,7 +91,7 @@ class ConfigurationTests(unittest.TestCase):
     def test_empty_tool_registry_loads(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "tools.toml").write_text("tools = []\n", encoding="utf-8")
+            (root / "tools.json").write_text('{"tools": []}\n', encoding="utf-8")
 
             specs, handlers = agent.load_tools(root)
 
