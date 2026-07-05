@@ -107,35 +107,37 @@ class ConfigurationTests(unittest.TestCase):
 class AgentLoopTests(unittest.TestCase):
     def test_returns_final_answer_without_sending_empty_tools(self):
         client, completions = fake_client(Message(content="done"))
-        messages = [{"role": "system", "content": "prompt"}]
+        react_agent = agent.ReActAgent(client, "model-x", "prompt", [], {}, 3)
 
-        result = agent.run_agent_turn(client, "model-x", messages, [], {}, 3)
+        result = react_agent.run_turn("hello")
 
         self.assertEqual(result, "done")
         self.assertNotIn("tools", completions.calls[0])
-        self.assertEqual(messages[-1]["content"], "done")
+        self.assertEqual(react_agent.messages[-1]["content"], "done")
 
     def test_executes_registered_tool_and_records_observation(self):
         client, _ = fake_client(
             Message(tool_calls=[tool_call()]),
             Message(content="finished"),
         )
-        messages = [{"role": "user", "content": "say hello"}]
         output = []
-
-        result = agent.run_agent_turn(
+        react_agent = agent.ReActAgent(
             client,
             "model-x",
-            messages,
+            "prompt",
             [{"type": "function", "function": {"name": "echo"}}],
             {"echo": lambda text: text},
             3,
-            output.append,
         )
 
+        result = react_agent.run_turn("say hello", output.append)
+
         self.assertEqual(result, "finished")
-        self.assertEqual([message["role"] for message in messages], ["user", "assistant", "tool", "assistant"])
-        self.assertEqual(messages[2]["content"], "hello")
+        self.assertEqual(
+            [message["role"] for message in react_agent.messages],
+            ["system", "user", "assistant", "tool", "assistant"],
+        )
+        self.assertEqual(react_agent.messages[3]["content"], "hello")
         self.assertTrue(any(line.startswith("Action:") for line in output))
         self.assertTrue(any(line.startswith("Observation:") for line in output))
 
@@ -148,28 +150,21 @@ class AgentLoopTests(unittest.TestCase):
         for call, handlers, expected in cases:
             with self.subTest(expected=expected):
                 client, _ = fake_client(Message(tool_calls=[call]), Message(content="recovered"))
-                messages = [{"role": "user", "content": "run"}]
+                react_agent = agent.ReActAgent(client, "model-x", "prompt", [], handlers, 3)
 
-                result = agent.run_agent_turn(
-                    client, "model-x", messages, [], handlers, 3, lambda _: None
-                )
+                result = react_agent.run_turn("run", lambda _: None)
 
                 self.assertEqual(result, "recovered")
-                self.assertIn(expected, messages[2]["content"])
+                self.assertIn(expected, react_agent.messages[3]["content"])
 
     def test_stops_after_max_steps(self):
         client, _ = fake_client(Message(tool_calls=[tool_call()]))
+        react_agent = agent.ReActAgent(
+            client, "model-x", "prompt", [], {"echo": lambda text: text}, 1
+        )
 
         with self.assertRaisesRegex(RuntimeError, "最大步骤"):
-            agent.run_agent_turn(
-                client,
-                "model-x",
-                [{"role": "user", "content": "loop"}],
-                [],
-                {"echo": lambda text: text},
-                1,
-                lambda _: None,
-            )
+            react_agent.run_turn("loop", lambda _: None)
 
 
 if __name__ == "__main__":

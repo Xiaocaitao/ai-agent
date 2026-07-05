@@ -59,8 +59,8 @@ def load_runtime(root=BASE_DIR):
 
 def load_tools(root=BASE_DIR):
     entries = _read_json(Path(root) / "config" / "tools.json").get("tools", [])
-    specs = []
-    handlers = {}
+    specs = [] # 告诉大模型有哪些工具，参数是什么
+    handlers = {} # 本地进行工具调用
     for entry in entries:
         if not entry.get("enabled", True):
             continue
@@ -75,6 +75,7 @@ def load_tools(root=BASE_DIR):
             raise ValueError(f"工具不可调用: {name}")
 
         handlers[name] = handler
+        # 生成工具说明书
         specs.append(
             {
                 "type": "function",
@@ -108,43 +109,53 @@ def _tool_result(handler, arguments):
     return json.dumps(result, ensure_ascii=False)
 
 
-def run_agent_turn(client, model, messages, tool_specs, handlers, max_steps, output=print):
-    for _ in range(max_steps):
-        request = {"model": model, "messages": messages}
-        if tool_specs:
-            request.update(tools=tool_specs, tool_choice="auto")
-        response = client.chat.completions.create(**request)
-        message = response.choices[0].message
-        messages.append(_assistant_message(message))
+class ReActAgent:
+    def __init__(self, client, model, prompt, tool_specs, handlers, max_steps):
+        self.client = client
+        self.model = model
+        self.tool_specs = tool_specs
+        self.handlers = handlers
+        self.max_steps = max_steps
+        self.messages = [{"role": "system", "content": prompt}]
 
-        if not message.tool_calls:
-            return message.content or ""
+    def run_turn(self, user_input, output=print):
+        self.messages.append({"role": "user", "content": user_input})
+        for _ in range(self.max_steps):
+            request = {"model": self.model, "messages": self.messages}
+            if self.tool_specs:
+                request.update(tools=self.tool_specs, tool_choice="auto")
+            response = self.client.chat.completions.create(**request)
+            message = response.choices[0].message
+            self.messages.append(_assistant_message(message))
 
-        for call in message.tool_calls:
-            name = call.function.name
-            raw_arguments = call.function.arguments
-            output(f"Action: {name}({raw_arguments})")
-            if name not in handlers:
-                observation = f"未注册工具: {name}"
-            else:
-                try:
-                    arguments = json.loads(raw_arguments)
-                    if not isinstance(arguments, dict):
-                        raise ValueError("参数必须是 JSON 对象")
-                    observation = _tool_result(handlers[name], arguments)
-                except json.JSONDecodeError:
-                    observation = f"参数不是合法 JSON: {raw_arguments}"
-                except Exception as error:
-                    observation = f"工具执行失败: {error}"
-            output(f"Observation: {observation}")
-            messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": call.id,
-                    "content": observation,
-                }
-            )
-    raise RuntimeError(f"已达到最大步骤数 {max_steps}")
+            if not message.tool_calls:
+                return message.content or ""
+
+            for call in message.tool_calls:
+                name = call.function.name
+                raw_arguments = call.function.arguments
+                output(f"Action: {name}({raw_arguments})")
+                if name not in self.handlers:
+                    observation = f"未注册工具: {name}"
+                else:
+                    try:
+                        arguments = json.loads(raw_arguments)
+                        if not isinstance(arguments, dict):
+                            raise ValueError("参数必须是 JSON 对象")
+                        observation = _tool_result(self.handlers[name], arguments)
+                    except json.JSONDecodeError:
+                        observation = f"参数不是合法 JSON: {raw_arguments}"
+                    except Exception as error:
+                        observation = f"工具执行失败: {error}"
+                output(f"Observation: {observation}")
+                self.messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": call.id,
+                        "content": observation,
+                    }
+                )
+        raise RuntimeError(f"已达到最大步骤数 {self.max_steps}")
 
 
 def main():
@@ -155,8 +166,16 @@ def main():
         raise SystemExit(f"配置错误: {error}") from error
 
     provider = runtime["provider"]
+    # 创建调用client
     client = OpenAI(api_key=provider["AGENT_API_KEY"], base_url=provider["base_url"])
-    messages = [{"role": "system", "content": runtime["prompt"]}]
+    agent = ReActAgent(
+        client,
+        provider["model"],
+        runtime["prompt"],
+        tool_specs,
+        handlers,
+        runtime["max_steps"],
+    )
     print("ReAct Agent 已启动，输入 exit 或 quit 退出。")
 
     while True:
@@ -169,17 +188,8 @@ def main():
             break
         if not user_input:
             continue
-
-        messages.append({"role": "user", "content": user_input})
         try:
-            answer = run_agent_turn(
-                client,
-                provider["model"],
-                messages,
-                tool_specs,
-                handlers,
-                runtime["max_steps"],
-            )
+            answer = agent.run_turn(user_input)
             print(f"Agent: {answer}")
         except (OpenAIError, RuntimeError) as error:
             print(f"Agent 错误: {error}")
