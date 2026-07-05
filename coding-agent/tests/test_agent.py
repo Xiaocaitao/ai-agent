@@ -107,7 +107,14 @@ class ConfigurationTests(unittest.TestCase):
 class AgentLoopTests(unittest.TestCase):
     def test_returns_final_answer_without_sending_empty_tools(self):
         client, completions = fake_client(Message(content="done"))
-        react_agent = agent.ReActAgent(client, "model-x", "prompt", [], {}, 3)
+        react_agent = agent.ReActAgent(
+            client=client,
+            model="model-x",
+            system_prompt="prompt",
+            tool_specs=[],
+            handlers={},
+            max_steps=3,
+        )
 
         result = react_agent.run_turn("hello")
 

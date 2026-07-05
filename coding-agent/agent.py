@@ -110,13 +110,13 @@ def _tool_result(handler, arguments):
 
 
 class ReActAgent:
-    def __init__(self, client, model, prompt, tool_specs, handlers, max_steps):
+    def __init__(self, client, model, system_prompt, tool_specs, handlers, max_steps):
         self.client = client
         self.model = model
         self.tool_specs = tool_specs
         self.handlers = handlers
         self.max_steps = max_steps
-        self.messages = [{"role": "system", "content": prompt}]
+        self.messages = [{"role": "system", "content": system_prompt}]
 
     def run_turn(self, user_input, output=print):
         self.messages.append({"role": "user", "content": user_input})
@@ -169,12 +169,12 @@ def main():
     # 创建调用client
     client = OpenAI(api_key=provider["AGENT_API_KEY"], base_url=provider["base_url"])
     agent = ReActAgent(
-        client,
-        provider["model"],
-        runtime["prompt"],
-        tool_specs,
-        handlers,
-        runtime["max_steps"],
+        client=client,
+        model=provider["model"],
+        system_prompt=runtime["prompt"],
+        tool_specs=tool_specs,
+        handlers=handlers,
+        max_steps=runtime["max_steps"],
     )
     print("ReAct Agent 已启动，输入 exit 或 quit 退出。")
 
