@@ -2,7 +2,7 @@
   "tools": [
     {
       "name": "run_command",
-      "module": "tools",
+      "module": "tools.run_command",
       "function": "run_command",
       "description": "运行一次非 Shell 终端命令，可提供标准输入，返回 stdout、stderr 和退出码。",
       "parameters": {
@@ -23,7 +23,7 @@
     },
     {
       "name": "read_file",
-      "module": "tools",
+      "module": "tools.read_file",
       "function": "read_file",
       "description": "读取工作区内 UTF-8 文本文件的指定行范围。",
       "parameters": {
@@ -39,7 +39,7 @@
     },
     {
       "name": "write_file",
-      "module": "tools",
+      "module": "tools.write_file",
       "function": "write_file",
       "description": "创建或完整覆盖工作区内的 UTF-8 文本文件。",
       "parameters": {
@@ -54,7 +54,7 @@
     },
     {
       "name": "search_files",
-      "module": "tools",
+      "module": "tools.search_files",
       "function": "search_files",
       "description": "递归搜索工作区文本文件中的普通字符串。",
       "parameters": {

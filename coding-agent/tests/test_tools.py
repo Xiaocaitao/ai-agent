@@ -62,7 +62,7 @@ class FileToolTests(unittest.TestCase):
     def test_writes_creates_parent_overwrites_and_reads_lines(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            with patch.object(tools, "WORKSPACE_ROOT", root):
+            with patch.object(tools._common, "WORKSPACE_ROOT", root):
                 first = tools.write_file("nested/data.txt", "one\ntwo\nthree\n")
                 second = tools.write_file("nested/data.txt", "alpha\nbeta\ngamma\n")
                 result = tools.read_file("nested/data.txt", start_line=2, max_lines=1)
@@ -78,7 +78,7 @@ class FileToolTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as outside:
             root = Path(directory)
             (root / "link").symlink_to(Path(outside), target_is_directory=True)
-            with patch.object(tools, "WORKSPACE_ROOT", root):
+            with patch.object(tools._common, "WORKSPACE_ROOT", root):
                 outside_result = tools.read_file("../outside.txt")
                 symlink_result = tools.write_file("link/data.txt", "secret")
 
@@ -100,7 +100,7 @@ class SearchToolTests(unittest.TestCase):
             (root / "src" / "skip.txt").write_text("needle\n", encoding="utf-8")
             (root / ".git" / "hidden.py").write_text("needle\n", encoding="utf-8")
             (root / "src" / "binary.py").write_bytes(b"needle\x00data")
-            with patch.object(tools, "WORKSPACE_ROOT", root):
+            with patch.object(tools._common, "WORKSPACE_ROOT", root):
                 result = tools.search_files("needle", path="src", pattern="*.py")
 
             self.assertTrue(result["ok"])

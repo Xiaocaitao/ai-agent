@@ -111,6 +111,10 @@ class ConfigurationTests(unittest.TestCase):
             set(handlers), {"run_command", "read_file", "write_file", "search_files"}
         )
         self.assertEqual({spec["function"]["name"] for spec in specs}, set(handlers))
+        self.assertEqual(
+            {name: handler.__module__ for name, handler in handlers.items()},
+            {name: f"tools.{name}" for name in handlers},
+        )
         self.assertTrue(
             all(
                 spec["function"]["parameters"]["additionalProperties"] is False
