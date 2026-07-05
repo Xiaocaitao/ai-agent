@@ -1,3 +1,72 @@
 {
-  "tools": []
+  "tools": [
+    {
+      "name": "run_command",
+      "module": "tools",
+      "function": "run_command",
+      "description": "运行一次非 Shell 终端命令，可提供标准输入，返回 stdout、stderr 和退出码。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "命令及参数数组，例如 [\"python\", \"-m\", \"unittest\"]"
+          },
+          "stdin": {"type": "string", "description": "可选标准输入"},
+          "cwd": {"type": "string", "description": "工作区内的执行目录"},
+          "timeout": {"type": "integer", "minimum": 1, "maximum": 120}
+        },
+        "required": ["args"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "read_file",
+      "module": "tools",
+      "function": "read_file",
+      "description": "读取工作区内 UTF-8 文本文件的指定行范围。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {"type": "string", "description": "工作区相对路径"},
+          "start_line": {"type": "integer", "minimum": 1},
+          "max_lines": {"type": "integer", "minimum": 1}
+        },
+        "required": ["path"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "write_file",
+      "module": "tools",
+      "function": "write_file",
+      "description": "创建或完整覆盖工作区内的 UTF-8 文本文件。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {"type": "string", "description": "工作区相对路径"},
+          "content": {"type": "string", "description": "完整文件内容"}
+        },
+        "required": ["path", "content"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "search_files",
+      "module": "tools",
+      "function": "search_files",
+      "description": "递归搜索工作区文本文件中的普通字符串。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {"type": "string", "description": "大小写敏感的搜索文本"},
+          "path": {"type": "string", "description": "工作区内的搜索目录"},
+          "pattern": {"type": "string", "description": "文件名 glob，例如 *.py"}
+        },
+        "required": ["query"],
+        "additionalProperties": false
+      }
+    }
+  ]
 }

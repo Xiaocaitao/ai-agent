@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -103,6 +104,20 @@ class ConfigurationTests(unittest.TestCase):
             self.assertEqual(specs, [])
             self.assertEqual(handlers, {})
 
+    def test_project_registry_loads_basic_tools(self):
+        specs, handlers = agent.load_tools()
+
+        self.assertEqual(
+            set(handlers), {"run_command", "read_file", "write_file", "search_files"}
+        )
+        self.assertEqual({spec["function"]["name"] for spec in specs}, set(handlers))
+        self.assertTrue(
+            all(
+                spec["function"]["parameters"]["additionalProperties"] is False
+                for spec in specs
+            )
+        )
+
 
 class AgentLoopTests(unittest.TestCase):
     def test_returns_final_answer_without_sending_empty_tools(self):
@@ -133,7 +148,7 @@ class AgentLoopTests(unittest.TestCase):
             "model-x",
             "prompt",
             [{"type": "function", "function": {"name": "echo"}}],
-            {"echo": lambda text: text},
+            {"echo": lambda text: {"ok": True, "data": {"text": text}, "error": None}},
             3,
         )
 
@@ -144,7 +159,10 @@ class AgentLoopTests(unittest.TestCase):
             [message["role"] for message in react_agent.messages],
             ["system", "user", "assistant", "tool", "assistant"],
         )
-        self.assertEqual(react_agent.messages[3]["content"], "hello")
+        self.assertEqual(
+            json.loads(react_agent.messages[3]["content"]),
+            {"ok": True, "data": {"text": "hello"}, "error": None},
+        )
         self.assertTrue(any(line.startswith("Action:") for line in output))
         self.assertTrue(any(line.startswith("Observation:") for line in output))
 
