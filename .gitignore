@@ -5,3 +5,4 @@ __pycache__/
 /output/
 /tmp/
 /coding-agent/config/settings.toml
+/coding-agent/workspace/

@@ -53,6 +53,16 @@ def fake_client(*messages):
 
 
 class ConfigurationTests(unittest.TestCase):
+    def test_resolves_existing_workspace_and_rejects_invalid_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = agent.resolve_workspace(directory)
+            file_path = Path(directory) / "file.txt"
+            file_path.write_text("content", encoding="utf-8")
+
+            self.assertEqual(workspace, Path(directory).resolve())
+            with self.assertRaisesRegex(ValueError, "工作目录"):
+                agent.resolve_workspace(file_path)
+
     def test_loads_active_provider_and_prompt(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

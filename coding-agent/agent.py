@@ -1,9 +1,11 @@
+import argparse
 import importlib
 import json
 import tomllib
 from pathlib import Path
 
 from openai import OpenAI, OpenAIError
+from tools import configure_workspace, resolve_workspace
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -159,7 +161,11 @@ class ReActAgent:
 
 
 def main():
+    parser = argparse.ArgumentParser(description="最小 ReAct Coding Agent")
+    parser.add_argument("workspace", nargs="?", default=".", help="Agent 工作目录")
+    args = parser.parse_args()
     try:
+        workspace = configure_workspace(resolve_workspace(args.workspace))
         runtime = load_runtime()
         tool_specs, handlers = load_tools()
     except ValueError as error:
@@ -176,7 +182,8 @@ def main():
         handlers=handlers,
         max_steps=runtime["max_steps"],
     )
-    print("ReAct Agent 已启动，输入 exit 或 quit 退出。")
+    print(f"ReAct Agent 已启动，工作目录: {workspace}")
+    print("输入 exit 或 quit 退出。")
 
     while True:
         try:

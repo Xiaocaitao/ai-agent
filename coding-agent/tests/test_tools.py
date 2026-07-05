@@ -59,6 +59,18 @@ class CommandToolTests(unittest.TestCase):
 
 
 class FileToolTests(unittest.TestCase):
+    def test_configures_workspace_root(self):
+        original = tools._common.WORKSPACE_ROOT
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                tools.configure_workspace(directory)
+                result = tools.write_file("created.txt", "content")
+
+                self.assertTrue(result["ok"])
+                self.assertTrue((Path(directory) / "created.txt").is_file())
+        finally:
+            tools._common.WORKSPACE_ROOT = original
+
     def test_writes_creates_parent_overwrites_and_reads_lines(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

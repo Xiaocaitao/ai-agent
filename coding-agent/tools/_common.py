@@ -7,6 +7,19 @@ MAX_SEARCH_RESULTS = 100
 IGNORED_DIRS = {".git", ".venv", ".idea", "__pycache__"}
 
 
+def resolve_workspace(path):
+    workspace = Path(path).expanduser().resolve()
+    if not workspace.is_dir():
+        raise ValueError(f"工作目录不存在或不是目录: {workspace}")
+    return workspace
+
+
+def configure_workspace(path):
+    global WORKSPACE_ROOT
+    WORKSPACE_ROOT = resolve_workspace(path)
+    return WORKSPACE_ROOT
+
+
 def success(data):
     return {"ok": True, "data": data, "error": None}
 
