@@ -55,18 +55,19 @@ class ConfigurationTests(unittest.TestCase):
     def test_loads_active_provider_and_prompt(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "prompts").mkdir()
-            (root / "config.toml").write_text(
+            config_dir = root / "config"
+            (config_dir / "prompts").mkdir(parents=True)
+            (config_dir / "settings.toml").write_text(
                 'active_provider = "deepseek"\n'
                 '[agent]\nprompt = "react"\nmax_steps = 3\n'
                 '[providers.deepseek]\nAGENT_API_KEY = "secret"\n'
                 'base_url = "https://example.test"\nmodel = "model-x"\n',
                 encoding="utf-8",
             )
-            (root / "prompts.toml").write_text(
+            (config_dir / "prompts.toml").write_text(
                 '[prompts.react]\npath = "prompts/react.md"\n', encoding="utf-8"
             )
-            (root / "prompts" / "react.md").write_text("react prompt", encoding="utf-8")
+            (config_dir / "prompts" / "react.md").write_text("react prompt", encoding="utf-8")
 
             runtime = agent.load_runtime(root)
 
@@ -77,13 +78,15 @@ class ConfigurationTests(unittest.TestCase):
     def test_rejects_missing_required_provider_values(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "config.toml").write_text(
+            config_dir = root / "config"
+            config_dir.mkdir()
+            (config_dir / "settings.toml").write_text(
                 'active_provider = "openai"\n'
                 '[agent]\nprompt = "react"\n'
                 '[providers.openai]\nAGENT_API_KEY = ""\nbase_url = ""\nmodel = ""\n',
                 encoding="utf-8",
             )
-            (root / "prompts.toml").write_text('[prompts.react]\npath = "missing.md"\n')
+            (config_dir / "prompts.toml").write_text('[prompts.react]\npath = "missing.md"\n')
 
             with self.assertRaisesRegex(ValueError, "AGENT_API_KEY"):
                 agent.load_runtime(root)
@@ -91,7 +94,9 @@ class ConfigurationTests(unittest.TestCase):
     def test_empty_tool_registry_loads(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "tools.json").write_text('{"tools": []}\n', encoding="utf-8")
+            config_dir = root / "config"
+            config_dir.mkdir()
+            (config_dir / "tools.json").write_text('{"tools": []}\n', encoding="utf-8")
 
             specs, handlers = agent.load_tools(root)
 

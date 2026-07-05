@@ -26,7 +26,8 @@ def _read_json(path):
 
 def load_runtime(root=BASE_DIR):
     root = Path(root)
-    config = _read_toml(root / "config.toml")
+    config_dir = root / "config"
+    config = _read_toml(config_dir / "settings.toml")
     provider_name = config.get("active_provider", "")
     provider = config.get("providers", {}).get(provider_name)
     if not provider:
@@ -38,12 +39,12 @@ def load_runtime(root=BASE_DIR):
 
     agent_config = config.get("agent", {})
     prompt_name = agent_config.get("prompt", "")
-    prompt_config = _read_toml(root / "prompts.toml").get("prompts", {}).get(prompt_name)
+    prompt_config = _read_toml(config_dir / "prompts.toml").get("prompts", {}).get(prompt_name)
     if not prompt_config or not prompt_config.get("path"):
         raise ValueError(f"未找到 Prompt 配置: {prompt_name}")
 
-    prompt_path = (root / prompt_config["path"]).resolve()
-    if not prompt_path.is_relative_to(root.resolve()):
+    prompt_path = (config_dir / prompt_config["path"]).resolve()
+    if not prompt_path.is_relative_to(config_dir.resolve()):
         raise ValueError("Prompt 路径不能超出项目目录")
     try:
         prompt = prompt_path.read_text(encoding="utf-8")
@@ -57,7 +58,7 @@ def load_runtime(root=BASE_DIR):
 
 
 def load_tools(root=BASE_DIR):
-    entries = _read_json(Path(root) / "tools.json").get("tools", [])
+    entries = _read_json(Path(root) / "config" / "tools.json").get("tools", [])
     specs = []
     handlers = {}
     for entry in entries:
