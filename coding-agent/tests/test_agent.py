@@ -134,6 +134,25 @@ class ConfigurationTests(unittest.TestCase):
 
 
 class AgentLoopTests(unittest.TestCase):
+    def test_sanitizes_nested_unicode_before_request(self):
+        dirty_emoji = "\ud83d\ude0a"
+        client, completions = fake_client(Message(content="done"))
+        react_agent = agent.ReActAgent(client, "model-x", "prompt", [], {}, 3)
+        react_agent.messages.append(
+            {
+                "role": "assistant",
+                "content": dirty_emoji,
+                "metadata": {"broken": "\ud83d", "valid": "中文✅"},
+            }
+        )
+
+        react_agent.run_turn("next")
+
+        sent = completions.calls[0]["messages"][1]
+        self.assertEqual(sent["content"], "😊")
+        self.assertEqual(sent["metadata"]["broken"], "�")
+        self.assertEqual(sent["metadata"]["valid"], "中文✅")
+
     def test_returns_final_answer_without_sending_empty_tools(self):
         client, completions = fake_client(Message(content="done"))
         react_agent = agent.ReActAgent(

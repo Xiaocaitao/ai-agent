@@ -111,6 +111,16 @@ def _tool_result(handler, arguments):
     return json.dumps(result, ensure_ascii=False)
 
 
+def sanitize_unicode(value):
+    if isinstance(value, str):
+        return value.encode("utf-16", "surrogatepass").decode("utf-16", "replace")
+    if isinstance(value, list):
+        return [sanitize_unicode(item) for item in value]
+    if isinstance(value, dict):
+        return {key: sanitize_unicode(item) for key, item in value.items()}
+    return value
+
+
 class ReActAgent:
     def __init__(self, client, model, system_prompt, tool_specs, handlers, max_steps):
         self.client = client
@@ -126,7 +136,7 @@ class ReActAgent:
             request = {"model": self.model, "messages": self.messages}
             if self.tool_specs:
                 request.update(tools=self.tool_specs, tool_choice="auto")
-            response = self.client.chat.completions.create(**request)
+            response = self.client.chat.completions.create(**sanitize_unicode(request))
             message = response.choices[0].message
             self.messages.append(_assistant_message(message))
 
