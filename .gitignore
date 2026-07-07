@@ -6,3 +6,4 @@ __pycache__/
 /tmp/
 /coding-agent/config/settings.toml
 /coding-agent/workspace/
+/coding-agent/node_modules/

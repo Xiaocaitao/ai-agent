@@ -1,0 +1,372 @@
+import { readFile, stat } from "node:fs/promises";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+import { createInterface } from "node:readline/promises";
+import { stdin, stdout } from "node:process";
+
+import OpenAI from "openai";
+import { parse } from "smol-toml";
+
+import { configureWorkspace } from "./tools/index.ts";
+
+//根目录路径
+const BASE_DIR = import.meta.dirname;
+
+// LLM提供商
+type Provider = { AGENT_API_KEY: string; base_url: string; model: string };
+
+// 运行时配置，LLM提供商，系统提示词，最大执行步数
+export type Runtime = { provider: Provider; prompt: string; maxSteps: number };
+
+// 工具处理函数，接收参数kv，对外返回任意值或者Promise支持同步/异步
+export type ToolHandler = (
+  argumentsValue: Record<string, unknown>,
+) => unknown | Promise<unknown>;
+
+// 给模型的工具描述
+type ToolSpec = {
+  type: "function";
+  function: {
+    name: string; // 工具函数名
+    description?: string; // 工具描述
+    parameters: Record<string, unknown>; // 参数定义
+  };
+};
+
+// LLM返回的工具调用请求
+type ToolCall = {
+  id: string;
+  type?: "function";
+  function: { name: string; arguments: string }; // 函数名和入参
+};
+
+// 通用消息格式
+type AgentMessage = {
+  role: string; // user / assistant /tool
+  content?: string | null;
+  tool_calls?: ToolCall[];
+  tool_call_id?: string; // ?
+};
+type AssistantMessage = { content: string | null; tool_calls?: ToolCall[] };
+
+// 鸭子类型，对openAI SDK 的最小约束
+type ChatClient = {
+  chat: {
+    completions: {
+      create(
+        request: Record<string, unknown>,
+      ): Promise<{ choices: Array<{ message: AssistantMessage }> }>;
+    };
+  };
+};
+
+// 将unknown安全转换为对象类型
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+// 读TOML配置
+async function readToml(filePath: string): Promise<Record<string, unknown>> {
+  try {
+    return record(parse(await readFile(filePath, "utf8")));
+  } catch (error) {
+    throw new Error(
+      `无法读取配置文件 ${path.basename(filePath)}: ${error instanceof Error ? error.message : error}`,
+    );
+  }
+}
+
+// 读JSON配置
+async function readJson(filePath: string): Promise<Record<string, unknown>> {
+  try {
+    return record(JSON.parse(await readFile(filePath, "utf8")));
+  } catch (error) {
+    throw new Error(
+      `无法读取配置文件 ${path.basename(filePath)}: ${error instanceof Error ? error.message : error}`,
+    );
+  }
+}
+
+// 验证工作目录
+export async function resolveWorkspace(value: string): Promise<string> {
+  const workspace = path.resolve(value);
+  try {
+    if (!(await stat(workspace)).isDirectory()) throw new Error();
+    return workspace;
+  } catch {
+    throw new Error(`工作目录不存在或不是目录: ${workspace}`);
+  }
+}
+
+export async function loadRuntime(root = BASE_DIR): Promise<Runtime> {
+  const configDir = path.join(root, "config");
+  const config = await readToml(path.join(configDir, "settings.toml"));
+  // 左边为null或者undefined才使用右边
+  const providerName = String(config.active_provider ?? "");
+  const provider = record(record(config.providers)[providerName]);
+  if (Object.keys(provider).length === 0)
+    throw new Error(`未找到供应商配置: ${providerName}`);
+  // 查配置缺不缺
+  for (const key of ["AGENT_API_KEY", "base_url", "model"] as const) {
+    if (!provider[key])
+      throw new Error(`供应商 ${providerName} 缺少配置: ${key}`);
+  }
+
+  const agentConfig = record(config.agent);
+  // 读system prompt
+  const promptName = String(agentConfig.prompt ?? "");
+  const prompts = await readToml(path.join(configDir, "prompts.toml"));
+  const promptConfig = record(record(prompts.prompts)[promptName]);
+  if (!promptConfig.path) throw new Error(`未找到 Prompt 配置: ${promptName}`);
+  const promptPath = path.resolve(configDir, String(promptConfig.path));
+  const relative = path.relative(configDir, promptPath);
+  if (relative === ".." || relative.startsWith(`..${path.sep}`))
+    throw new Error("Prompt 路径不能超出项目目录");
+  let prompt: string;
+  try {
+    prompt = await readFile(promptPath, "utf8");
+  } catch (error) {
+    throw new Error(
+      `无法读取 Prompt: ${promptPath}: ${error instanceof Error ? error.message : error}`,
+    );
+  }
+
+  const maxSteps = agentConfig.max_steps ?? 10;
+  if (!Number.isInteger(maxSteps) || Number(maxSteps) < 1)
+    throw new Error("max_steps 必须是正整数");
+  return {
+    provider: provider as Provider,
+    prompt,
+    maxSteps: Number(maxSteps),
+  };
+}
+
+export async function loadTools(
+  root = BASE_DIR,
+): Promise<{ specs: ToolSpec[]; handlers: Record<string, ToolHandler> }> {
+  const entries = read(
+    (await readJson(path.join(root, "config/tools.json"))).tools,
+  );
+  const specs: ToolSpec[] = [];
+  const handlers: Record<string, ToolHandler> = {};
+  // 工具集发现
+  for (const rawEntry of entries) {
+    const entry = record(rawEntry);
+    if (entry.enabled === false) continue;
+    const name = String(entry.name ?? "");
+    if (!name || name in handlers)
+      throw new Error(`工具名称为空或重复: ${name}`);
+    try {
+      const moduleName = String(entry.module ?? "");
+      if (
+        !moduleName.startsWith("tools.") ||
+        !/^[A-Za-z0-9_.]+$/.test(moduleName)
+      )
+        throw new Error("模块路径非法");
+      const modulePath = path.join(
+        root,
+        `${moduleName.replaceAll(".", path.sep)}.ts`,
+      );
+      const loaded = (await import(pathToFileURL(modulePath).href)) as Record<
+        string,
+        unknown
+      >;
+      const handler = loaded[String(entry.function ?? "")];
+      if (typeof handler !== "function") throw new Error("工具不可调用");
+      handlers[name] = handler as ToolHandler;
+    } catch (error) {
+      throw new Error(
+        `无法加载工具 ${name}: ${error instanceof Error ? error.message : error}`,
+      );
+    }
+    specs.push({
+      type: "function",
+      function: {
+        name,
+        description: String(entry.description ?? ""),
+        parameters:
+          Object.keys(record(entry.parameters)).length > 0
+            ? record(entry.parameters)
+            : { type: "object", properties: {}, additionalProperties: false },
+      },
+    });
+  }
+  return { specs, handlers };
+}
+
+function read(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+export function sanitizeUnicode(value: unknown): unknown {
+  if (typeof value === "string") return value.toWellFormed();
+  // 函数引用
+  if (Array.isArray(value)) return value.map(sanitizeUnicode);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, sanitizeUnicode(item)]),
+    );
+  }
+  return value;
+}
+
+// 包装模型回复
+function assistantMessage(message: AssistantMessage): AgentMessage {
+  const result: AgentMessage = { role: "assistant" };
+  if (message.content !== null) result.content = message.content;
+  if (message.tool_calls?.length) result.tool_calls = message.tool_calls;
+  return result;
+}
+
+async function toolResult(
+  handler: ToolHandler,
+  argumentsValue: Record<string, unknown>,
+): Promise<string> {
+  // 工具调用
+  const result = await handler(argumentsValue);
+  // 格式化结果
+  return typeof result === "string" ? result : JSON.stringify(result);
+}
+
+export class ReActAgent {
+  // readonly外部可读，但不能重新赋值
+  readonly messages: AgentMessage[]; // 对话历史
+  private readonly client: ChatClient; // LLM客户端
+  private readonly model: string; // 模型名
+  private readonly toolSpecs: ToolSpec[]; // 工具定义列表
+  private readonly handlers: Record<string, ToolHandler>; // 工具名-->处理函数
+  private readonly maxSteps: number; // 最大步数上限
+
+  constructor(
+    client: ChatClient,
+    model: string,
+    systemPrompt: string,
+    toolSpecs: ToolSpec[],
+    handlers: Record<string, ToolHandler>,
+    maxSteps: number,
+  ) {
+    this.client = client;
+    this.model = model;
+    this.toolSpecs = toolSpecs;
+    this.handlers = handlers;
+    this.maxSteps = maxSteps;
+    this.messages = [{ role: "system", content: systemPrompt }];
+  }
+
+  async runTurn(
+    userInput: string,
+    output: (line: string) => void = console.log,
+  ): Promise<string> {
+    // 用户输入
+    this.messages.push({ role: "user", content: userInput });
+    for (let step = 0; step < this.maxSteps; step += 1) {
+      // 拼请求
+      const request: Record<string, unknown> = {
+        model: this.model,
+        messages: this.messages,
+      };
+      // 拼工具描述 auto表示让模型自己决定调不调
+      if (this.toolSpecs.length > 0)
+        Object.assign(request, { tools: this.toolSpecs, tool_choice: "auto" });
+      const response = await this.client.chat.completions.create(
+        sanitizeUnicode(request) as Record<string, unknown>,
+      );
+      const message = response.choices[0]?.message;
+      if (!message) throw new Error("模型响应为空");
+      this.messages.push(assistantMessage(message)); // 模型回复入队
+      if (!message.tool_calls?.length) return message.content ?? ""; // 判断是否有工具调用，无则结果返回
+
+      // 可能一次调多个工具
+      for (const call of message.tool_calls) {
+        const name = call.function.name;
+        const rawArguments = call.function.arguments;
+        output(`Action: ${name}(${rawArguments})`);
+        let observation: string;
+        if (!(name in this.handlers)) {
+          observation = `未注册工具: ${name}`;
+        } else {
+          try {
+            // 参数解析
+            const argumentsValue: unknown = JSON.parse(rawArguments);
+            if (
+              !argumentsValue ||
+              typeof argumentsValue !== "object" ||
+              Array.isArray(argumentsValue)
+            ) {
+              throw new Error("参数必须是 JSON 对象");
+            }
+            // 工具执行
+            observation = await toolResult(
+              this.handlers[name] as ToolHandler,
+              argumentsValue as Record<string, unknown>,
+            );
+          } catch (error) {
+            observation =
+              error instanceof SyntaxError
+                ? `参数不是合法 JSON: ${rawArguments}`
+                : `工具执行失败: ${error instanceof Error ? error.message : error}`;
+          }
+        }
+        output(`Observation: ${observation}`);
+        // 工具结果入队
+        this.messages.push({
+          role: "tool",
+          tool_call_id: call.id,
+          content: observation,
+        });
+      }
+    }
+    throw new Error(`已达到最大步骤数 ${this.maxSteps}`);
+  }
+}
+
+async function main(): Promise<void> {
+  // 设置工作目录
+  const workspace = configureWorkspace(
+    await resolveWorkspace(process.argv[2] ?? "."),
+  );
+  const runtime = await loadRuntime();
+  const { specs, handlers } = await loadTools();
+  const client = new OpenAI({
+    apiKey: runtime.provider.AGENT_API_KEY,
+    baseURL: runtime.provider.base_url,
+  }) as unknown as ChatClient;
+  const agent = new ReActAgent(
+    client,
+    runtime.provider.model,
+    runtime.prompt,
+    specs,
+    handlers,
+    runtime.maxSteps,
+  );
+  console.log(`ReAct Agent 已启动，工作目录: ${workspace}`);
+  console.log("输入 exit 或 quit 退出。");
+  const terminal = createInterface({ input: stdin, output: stdout });
+  try {
+    while (true) {
+      const userInput = (await terminal.question("You: ")).trim();
+      if (["exit", "quit"].includes(userInput.toLocaleLowerCase())) break;
+      if (!userInput) continue;
+      try {
+        console.log(`Agent: ${await agent.runTurn(userInput)}`);
+      } catch (error) {
+        console.log(
+          `Agent 错误: ${error instanceof Error ? error.message : error}`,
+        );
+      }
+    }
+  } finally {
+    terminal.close();
+  }
+}
+
+if (import.meta.main) {
+  main().catch((error) => {
+    console.error(
+      `配置错误: ${error instanceof Error ? error.message : error}`,
+    );
+    process.exitCode = 1;
+  });
+}
