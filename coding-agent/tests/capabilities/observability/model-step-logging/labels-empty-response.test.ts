@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { ReActAgent } from "../../../../agent.ts";
+import { ToolRegistry } from "../../../../tools/registry.ts";
 import { choice, fakeClient, message } from "./test-support.ts";
 
 test("日志明确标记模型空响应", async () => {
@@ -9,8 +10,7 @@ test("日志明确标记模型空响应", async () => {
     fakeClient(choice(message(null), "stop")),
     "model-x",
     "prompt",
-    [],
-    {},
+    new ToolRegistry([], {}),
     3,
   );
   const logs: string[] = [];

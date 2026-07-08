@@ -1,4 +1,4 @@
-import type { ToolHandler } from "../../../../agent.ts";
+import type { ToolHandler } from "../../../../tools/registry.ts";
 
 export function toolCall(text: string, id: string) {
   return {

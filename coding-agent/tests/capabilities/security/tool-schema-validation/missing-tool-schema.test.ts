@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { loadTools } from "../../../../agent.ts";
+import { loadTools } from "../../../../tools/registry.ts";
 
 test("工具缺少参数 Schema 时拒绝加载", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "coding-agent-missing-schema-test-"));

@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { ReActAgent } from "../../../../agent.ts";
-import type { ToolHandler } from "../../../../agent.ts";
+import { ToolRegistry } from "../../../../tools/registry.ts";
+import type { ToolHandler } from "../../../../tools/registry.ts";
 import { choice, echoSpecs, fakeClient, message } from "./test-support.ts";
 
 test("日志省略工具正文但消息历史保留完整内容", async () => {
@@ -25,8 +26,7 @@ test("日志省略工具正文但消息历史保留完整内容", async () => {
     ),
     "model-x",
     "prompt",
-    echoSpecs,
-    handlers,
+    new ToolRegistry(echoSpecs, handlers),
     3,
   );
   const logs: string[] = [];

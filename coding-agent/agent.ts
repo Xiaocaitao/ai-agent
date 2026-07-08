@@ -1,33 +1,13 @@
-import { readFile, stat } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 
-import { Ajv } from "ajv";
-import type { ErrorObject, ValidateFunction } from "ajv";
 import OpenAI from "openai";
 
 import { loadRuntime } from "./config.ts";
 import { configureWorkspace } from "./tools/index.ts";
-
-//根目录路径
-const BASE_DIR = import.meta.dirname;
-
-// 工具处理函数，接收参数kv，对外返回任意值或者Promise支持同步/异步
-export type ToolHandler = (
-  argumentsValue: Record<string, unknown>,
-) => unknown | Promise<unknown>;
-
-// 给模型的工具描述
-type ToolSpec = {
-  type: "function";
-  function: {
-    name: string; // 工具函数名
-    description?: string; // 工具描述
-    parameters: Record<string, unknown>; // 参数定义
-  };
-};
+import { loadTools, ToolRegistry } from "./tools/registry.ts";
 
 // LLM返回的工具调用请求
 type ToolCall = {
@@ -45,13 +25,6 @@ type AgentMessage = {
 };
 type AssistantMessage = { content: string | null; tool_calls?: ToolCall[] };
 
-type ValidationDetail = {
-  path: string;
-  keyword: string;
-  message: string;
-  params: Record<string, unknown>;
-};
-
 // 鸭子类型，对openAI SDK 的最小约束
 type ChatClient = {
   chat: {
@@ -68,24 +41,6 @@ type ChatClient = {
   };
 };
 
-// 将unknown安全转换为对象类型
-function record(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
-// 读JSON配置
-async function readJson(filePath: string): Promise<Record<string, unknown>> {
-  try {
-    return record(JSON.parse(await readFile(filePath, "utf8")));
-  } catch (error) {
-    throw new Error(
-      `无法读取配置文件 ${path.basename(filePath)}: ${error instanceof Error ? error.message : error}`,
-    );
-  }
-}
-
 // 验证工作目录
 export async function resolveWorkspace(value: string): Promise<string> {
   const workspace = path.resolve(value);
@@ -95,65 +50,6 @@ export async function resolveWorkspace(value: string): Promise<string> {
   } catch {
     throw new Error(`工作目录不存在或不是目录: ${workspace}`);
   }
-}
-
-export async function loadTools(
-  root = BASE_DIR,
-): Promise<{ specs: ToolSpec[]; handlers: Record<string, ToolHandler> }> {
-  const entries = read(
-    (await readJson(path.join(root, "config/tools.json"))).tools,
-  );
-  const specs: ToolSpec[] = [];
-  const handlers: Record<string, ToolHandler> = {};
-  // 工具集发现
-  for (const rawEntry of entries) {
-    const entry = record(rawEntry);
-    if (entry.enabled === false) continue;
-    const name = String(entry.name ?? "");
-    if (!name || name in handlers)
-      throw new Error(`工具名称为空或重复: ${name}`);
-    const parameters = record(entry.parameters);
-    if (Object.keys(parameters).length === 0)
-      throw new Error(`工具 ${name} 缺少参数 Schema`);
-    if (parameters.type !== "object")
-      throw new Error(`工具 ${name} 参数 Schema 必须声明 type: object`);
-    try {
-      const moduleName = String(entry.module ?? "");
-      if (
-        !moduleName.startsWith("tools.") ||
-        !/^[A-Za-z0-9_.]+$/.test(moduleName)
-      )
-        throw new Error("模块路径非法");
-      const modulePath = path.join(
-        root,
-        `${moduleName.replaceAll(".", path.sep)}.ts`,
-      );
-      const loaded = (await import(pathToFileURL(modulePath).href)) as Record<
-        string,
-        unknown
-      >;
-      const handler = loaded[String(entry.function ?? "")];
-      if (typeof handler !== "function") throw new Error("工具不可调用");
-      handlers[name] = handler as ToolHandler;
-    } catch (error) {
-      throw new Error(
-        `无法加载工具 ${name}: ${error instanceof Error ? error.message : error}`,
-      );
-    }
-    specs.push({
-      type: "function",
-      function: {
-        name,
-        description: String(entry.description ?? ""),
-        parameters,
-      },
-    });
-  }
-  return { specs, handlers };
-}
-
-function read(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
 }
 
 export function sanitizeUnicode(value: unknown): unknown {
@@ -174,26 +70,6 @@ function assistantMessage(message: AssistantMessage): AgentMessage {
   if (message.content !== null) result.content = message.content;
   if (message.tool_calls?.length) result.tool_calls = message.tool_calls;
   return result;
-}
-
-async function toolResult(
-  handler: ToolHandler,
-  argumentsValue: Record<string, unknown>,
-): Promise<string> {
-  // 工具调用
-  const result = await handler(argumentsValue);
-  // 格式化结果
-  return typeof result === "string" ? result : JSON.stringify(result);
-}
-
-function validationFailure(errors: ErrorObject[] | null | undefined): string {
-  const details: ValidationDetail[] = (errors ?? []).map((error) => ({
-    path: error.instancePath || "$",
-    keyword: error.keyword,
-    message: error.message ?? "参数不符合 Schema",
-    params: error.params,
-  }));
-  return JSON.stringify({ ok: false, error: "工具参数校验失败", details });
 }
 
 const OMITTED_LOG_FIELDS = new Set(["content", "stdin", "stdout", "stderr"]);
@@ -230,46 +106,19 @@ export class ReActAgent {
   readonly messages: AgentMessage[]; // 对话历史
   private readonly client: ChatClient; // LLM客户端
   private readonly model: string; // 模型名
-  private readonly toolSpecs: ToolSpec[]; // 工具定义列表
-  private readonly handlers: Record<string, ToolHandler>; // 工具名-->处理函数
-  private readonly validators: Map<string, ValidateFunction>; // 工具名-->参数校验函数
+  private readonly tools: ToolRegistry;
   private readonly maxSteps: number; // 最大步数上限
 
   constructor(
     client: ChatClient,
     model: string,
     systemPrompt: string,
-    toolSpecs: ToolSpec[],
-    handlers: Record<string, ToolHandler>,
+    tools: ToolRegistry,
     maxSteps: number,
   ) {
     this.client = client;
     this.model = model;
-    this.toolSpecs = toolSpecs;
-    this.handlers = handlers;
-    const ajv = new Ajv({
-      allErrors: true,
-      coerceTypes: false,
-      removeAdditional: false,
-      useDefaults: false,
-    });
-    this.validators = new Map();
-    for (const spec of toolSpecs) {
-      const name = spec.function.name;
-      if (spec.function.parameters.type !== "object")
-        throw new Error(`工具 ${name} 参数 Schema 必须声明 type: object`);
-      try {
-        this.validators.set(name, ajv.compile(spec.function.parameters));
-      } catch (error) {
-        throw new Error(
-          `工具 ${name} 参数 Schema 非法: ${error instanceof Error ? error.message : error}`,
-        );
-      }
-    }
-    for (const name of Object.keys(handlers)) {
-      if (!this.validators.has(name))
-        throw new Error(`工具 ${name} 缺少参数 Schema`);
-    }
+    this.tools = tools;
     this.maxSteps = maxSteps;
     this.messages = [{ role: "system", content: systemPrompt }];
   }
@@ -289,8 +138,8 @@ export class ReActAgent {
         messages: this.messages,
       };
       // 拼工具描述 auto表示让模型自己决定调不调
-      if (this.toolSpecs.length > 0)
-        Object.assign(request, { tools: this.toolSpecs, tool_choice: "auto" });
+      if (this.tools.specs.length > 0)
+        Object.assign(request, { tools: this.tools.specs, tool_choice: "auto" });
       const response = await this.client.chat.completions.create(
         sanitizeUnicode(request) as Record<string, unknown>,
       );
@@ -311,38 +160,7 @@ export class ReActAgent {
         const name = call.function.name;
         const rawArguments = call.function.arguments;
         output(`${toolLabel} Action: ${name}(${summarizeLogJson(rawArguments)})`);
-        let observation: string;
-        if (!(name in this.handlers)) {
-          observation = `未注册工具: ${name}`;
-        } else {
-          try {
-            // 参数解析
-            const argumentsValue: unknown = JSON.parse(rawArguments);
-            const validate = this.validators.get(name);
-            if (!validate) {
-              observation = validationFailure([{
-                instancePath: "",
-                schemaPath: "",
-                keyword: "schema",
-                params: { tool: name },
-                message: `工具 ${name} 缺少参数 Schema`,
-              }]);
-            } else if (!validate(argumentsValue)) {
-              observation = validationFailure(validate.errors);
-            } else {
-              // 工具执行
-              observation = await toolResult(
-                this.handlers[name] as ToolHandler,
-                argumentsValue as Record<string, unknown>,
-              );
-            }
-          } catch (error) {
-            observation =
-              error instanceof SyntaxError
-                ? `参数不是合法 JSON: ${rawArguments}`
-                : `工具执行失败: ${error instanceof Error ? error.message : error}`;
-          }
-        }
+        const observation = await this.tools.execute(name, rawArguments);
         output(`${toolLabel} Observation: ${summarizeLogJson(observation)}`);
         // 工具结果入队
         this.messages.push({
@@ -362,7 +180,7 @@ async function main(): Promise<void> {
     await resolveWorkspace(process.argv[2] ?? "."),
   );
   const runtime = await loadRuntime();
-  const { specs, handlers } = await loadTools();
+  const tools = await loadTools();
   const client = new OpenAI({
     apiKey: runtime.provider.AGENT_API_KEY,
     baseURL: runtime.provider.base_url,
@@ -371,8 +189,7 @@ async function main(): Promise<void> {
     client,
     runtime.provider.model,
     runtime.prompt,
-    specs,
-    handlers,
+    tools,
     runtime.maxSteps,
   );
   console.log(`ReAct Agent 已启动，工作目录: ${workspace}`);

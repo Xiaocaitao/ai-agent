@@ -2,8 +2,9 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { loadTools, ReActAgent } from "../../../../agent.ts";
+import { ReActAgent } from "../../../../agent.ts";
 import { configureWorkspace } from "../../../../tools/index.ts";
+import { loadTools } from "../../../../tools/registry.ts";
 
 export function toolCall(name: string, argumentsValue: Record<string, unknown>, id = name) {
   return {
@@ -20,7 +21,7 @@ export function message(content: string | null = null, toolCalls: ReturnType<typ
 export async function createTestAgent(...responses: ReturnType<typeof message>[]) {
   const root = await mkdtemp(path.join(tmpdir(), "coding-agent-schema-test-"));
   configureWorkspace(root);
-  const { specs, handlers } = await loadTools();
+  const tools = await loadTools();
   const calls: unknown[] = [];
   const client = {
     chat: {
@@ -33,7 +34,7 @@ export async function createTestAgent(...responses: ReturnType<typeof message>[]
     },
   };
   return {
-    agent: new ReActAgent(client, "model-x", "prompt", specs, handlers, 5),
+    agent: new ReActAgent(client, "model-x", "prompt", tools, 5),
     calls,
     root,
   };
