@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { ReActAgent } from "../../../../agent.ts";
+import { ReActAgent } from "../../../../runtime.ts";
 import { ToolRegistry } from "../../../../tools/registry.ts";
 import type { ToolHandler } from "../../../../tools/registry.ts";
 import { choice, echoSpecs, fakeClient, message } from "./test-support.ts";

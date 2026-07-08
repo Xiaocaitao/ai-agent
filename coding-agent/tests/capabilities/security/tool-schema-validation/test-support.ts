@@ -2,7 +2,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { ReActAgent } from "../../../../agent.ts";
+import { ReActAgent } from "../../../../runtime.ts";
 import { configureWorkspace } from "../../../../tools/index.ts";
 import { loadTools } from "../../../../tools/registry.ts";
 
