@@ -87,7 +87,7 @@ test("sanitizeUnicode 清洗嵌套的孤立代理项", () => {
 test("ReActAgent 无工具调用时返回最终回答", async () => {
   const { client, calls } = fakeClient(message("done"));
   const agent = new ReActAgent(client, "model-x", "prompt", [], {}, 3);
-  assert.equal(await agent.runTurn("hello"), "done");
+  assert.equal(await agent.runTurn("hello", () => undefined), "done");
   assert.equal("tools" in (calls[0] as object), false);
   assert.equal(agent.messages.at(-1)?.content, "done");
 });
@@ -99,8 +99,8 @@ test("ReActAgent 执行工具并记录 Observation", async () => {
   assert.equal(await agent.runTurn("say hello", output.push.bind(output)), "finished");
   assert.deepEqual(agent.messages.map(({ role }) => role), ["system", "user", "assistant", "tool", "assistant"]);
   assert.deepEqual(JSON.parse(String(agent.messages[3]?.content)), { ok: true, data: { text: "hello" }, error: null });
-  assert.ok(output.some((line) => line.startsWith("Action:")));
-  assert.ok(output.some((line) => line.startsWith("Observation:")));
+  assert.ok(output.some((line) => line.includes("Action:")));
+  assert.ok(output.some((line) => line.includes("Observation:")));
 });
 
 test("ReActAgent 将工具错误转为 Observation", async () => {

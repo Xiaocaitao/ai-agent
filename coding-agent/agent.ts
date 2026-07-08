@@ -64,7 +64,12 @@ type ChatClient = {
     completions: {
       create(
         request: Record<string, unknown>,
-      ): Promise<{ choices: Array<{ message: AssistantMessage }> }>;
+      ): Promise<{
+        choices: Array<{
+          message: AssistantMessage;
+          finish_reason?: string | null;
+        }>;
+      }>;
     };
   };
 };
@@ -251,6 +256,35 @@ function validationFailure(errors: ErrorObject[] | null | undefined): string {
   return JSON.stringify({ ok: false, error: "工具参数校验失败", details });
 }
 
+const OMITTED_LOG_FIELDS = new Set(["content", "stdin", "stdout", "stderr"]);
+
+function summarizeLogValue(value: unknown, key = ""): unknown {
+  if (typeof value === "string") {
+    if (OMITTED_LOG_FIELDS.has(key) && value.length > 0)
+      return `<省略 ${value.length} 字符>`;
+    return value.length > 200 ? `${value.slice(0, 200)}…<共 ${value.length} 字符>` : value;
+  }
+  if (Array.isArray(value)) return value.map((item) => summarizeLogValue(item));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([itemKey, item]) => [itemKey, summarizeLogValue(item, itemKey)]),
+    );
+  }
+  return value;
+}
+
+function summarizeLogJson(value: string): string {
+  try {
+    return JSON.stringify(summarizeLogValue(JSON.parse(value)));
+  } catch {
+    return value.length > 200 ? `${value.slice(0, 200)}…<共 ${value.length} 字符>` : value;
+  }
+}
+
+function finishReasonSuffix(value: string | null | undefined): string {
+  return value ? `，finish_reason=${value}` : "";
+}
+
 export class ReActAgent {
   // readonly外部可读，但不能重新赋值
   readonly messages: AgentMessage[]; // 对话历史
@@ -307,6 +341,8 @@ export class ReActAgent {
     // 用户输入
     this.messages.push({ role: "user", content: userInput });
     for (let step = 0; step < this.maxSteps; step += 1) {
+      const stepLabel = `[Step ${step + 1}/${this.maxSteps}]`;
+      output(`${stepLabel} → 请求模型`);
       // 拼请求
       const request: Record<string, unknown> = {
         model: this.model,
@@ -318,16 +354,23 @@ export class ReActAgent {
       const response = await this.client.chat.completions.create(
         sanitizeUnicode(request) as Record<string, unknown>,
       );
-      const message = response.choices[0]?.message;
+      const choice = response.choices[0];
+      const message = choice?.message;
       if (!message) throw new Error("模型响应为空");
       this.messages.push(assistantMessage(message)); // 模型回复入队
-      if (!message.tool_calls?.length) return message.content ?? ""; // 判断是否有工具调用，无则结果返回
+      const finishReason = finishReasonSuffix(choice.finish_reason);
+      if (!message.tool_calls?.length) {
+        output(`${stepLabel} ← ${message.content ? "最终回答" : "空响应"}${finishReason}`);
+        return message.content ?? "";
+      }
+      output(`${stepLabel} ← 工具调用，共 ${message.tool_calls.length} 个${finishReason}`);
 
       // 可能一次调多个工具
-      for (const call of message.tool_calls) {
+      for (const [callIndex, call] of message.tool_calls.entries()) {
+        const toolLabel = `  [Tool ${callIndex + 1}/${message.tool_calls.length}]`;
         const name = call.function.name;
         const rawArguments = call.function.arguments;
-        output(`Action: ${name}(${rawArguments})`);
+        output(`${toolLabel} Action: ${name}(${summarizeLogJson(rawArguments)})`);
         let observation: string;
         if (!(name in this.handlers)) {
           observation = `未注册工具: ${name}`;
@@ -360,7 +403,7 @@ export class ReActAgent {
                 : `工具执行失败: ${error instanceof Error ? error.message : error}`;
           }
         }
-        output(`Observation: ${observation}`);
+        output(`${toolLabel} Observation: ${summarizeLogJson(observation)}`);
         // 工具结果入队
         this.messages.push({
           role: "tool",
