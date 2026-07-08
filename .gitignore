@@ -7,3 +7,4 @@ __pycache__/
 /coding-agent/config/settings.toml
 /coding-agent/workspace/
 /coding-agent/node_modules/
+/ts-learning-todo/
