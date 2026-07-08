@@ -15,6 +15,11 @@ function toolCall(name = "echo", argumentsValue = '{"text":"hello"}', id = "call
   return { id, type: "function" as const, function: { name, arguments: argumentsValue } };
 }
 
+const echoSpecs = [{
+  type: "function" as const,
+  function: { name: "echo", parameters: { type: "object" } },
+}];
+
 function fakeClient(...messages: ReturnType<typeof message>[]) {
   const calls: unknown[] = [];
   return {
@@ -90,7 +95,7 @@ test("ReActAgent 无工具调用时返回最终回答", async () => {
 test("ReActAgent 执行工具并记录 Observation", async () => {
   const { client } = fakeClient(message(null, [toolCall()]), message("finished"));
   const output: string[] = [];
-  const agent = new ReActAgent(client, "model-x", "prompt", [{ type: "function", function: { name: "echo", parameters: { type: "object" } } }], { echo: ({ text }) => ({ ok: true, data: { text }, error: null }) }, 3);
+  const agent = new ReActAgent(client, "model-x", "prompt", echoSpecs, { echo: ({ text }) => ({ ok: true, data: { text }, error: null }) }, 3);
   assert.equal(await agent.runTurn("say hello", output.push.bind(output)), "finished");
   assert.deepEqual(agent.messages.map(({ role }) => role), ["system", "user", "assistant", "tool", "assistant"]);
   assert.deepEqual(JSON.parse(String(agent.messages[3]?.content)), { ok: true, data: { text: "hello" }, error: null });
@@ -106,7 +111,8 @@ test("ReActAgent 将工具错误转为 Observation", async () => {
   ];
   for (const item of cases) {
     const { client } = fakeClient(message(null, [item.call]), message("recovered"));
-    const agent = new ReActAgent(client, "model-x", "prompt", [], item.handlers, 3);
+    const specs = Object.hasOwn(item.handlers, "echo") ? echoSpecs : [];
+    const agent = new ReActAgent(client, "model-x", "prompt", specs, item.handlers, 3);
     assert.equal(await agent.runTurn("run", () => undefined), "recovered");
     assert.match(String(agent.messages[3]?.content), new RegExp(item.expected));
   }
@@ -114,6 +120,6 @@ test("ReActAgent 将工具错误转为 Observation", async () => {
 
 test("ReActAgent 达到最大步骤时停止", async () => {
   const { client } = fakeClient(message(null, [toolCall()]));
-  const agent = new ReActAgent(client, "model-x", "prompt", [], { echo: ({ text }) => text }, 1);
+  const agent = new ReActAgent(client, "model-x", "prompt", echoSpecs, { echo: ({ text }) => text }, 1);
   await assert.rejects(() => agent.runTurn("loop", () => undefined), /最大步骤/);
 });

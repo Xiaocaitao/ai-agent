@@ -7,10 +7,11 @@
   },
   "scripts": {
     "start": "node agent.ts",
-    "test": "node --test tests/*.test.ts",
+    "test": "node --test \"tests/**/*.test.ts\"",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "ajv": "^8.20.0",
     "openai": "^6.45.0",
     "smol-toml": "^1.7.0"
   },

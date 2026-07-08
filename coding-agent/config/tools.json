@@ -10,11 +10,12 @@
         "properties": {
           "args": {
             "type": "array",
+            "minItems": 1,
             "items": {"type": "string"},
             "description": "命令及参数数组，例如 [\"python\", \"-m\", \"unittest\"]"
           },
           "stdin": {"type": "string", "description": "可选标准输入"},
-          "cwd": {"type": "string", "description": "工作区内的执行目录"},
+          "cwd": {"type": "string", "minLength": 1, "description": "工作区内的执行目录"},
           "timeout": {"type": "integer", "minimum": 1, "maximum": 120}
         },
         "required": ["args"],
@@ -29,7 +30,7 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "path": {"type": "string", "description": "工作区相对路径"},
+          "path": {"type": "string", "minLength": 1, "description": "工作区相对路径"},
           "start_line": {"type": "integer", "minimum": 1},
           "max_lines": {"type": "integer", "minimum": 1}
         },
@@ -45,7 +46,7 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "path": {"type": "string", "description": "工作区相对路径"},
+          "path": {"type": "string", "minLength": 1, "description": "工作区相对路径"},
           "content": {"type": "string", "description": "完整文件内容"}
         },
         "required": ["path", "content"],
@@ -60,9 +61,9 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "query": {"type": "string", "description": "大小写敏感的搜索文本"},
-          "path": {"type": "string", "description": "工作区内的搜索目录"},
-          "pattern": {"type": "string", "description": "文件名 glob，例如 *.py"}
+          "query": {"type": "string", "minLength": 1, "description": "大小写敏感的搜索文本"},
+          "path": {"type": "string", "minLength": 1, "description": "工作区内的搜索目录"},
+          "pattern": {"type": "string", "minLength": 1, "description": "文件名 glob，例如 *.py"}
         },
         "required": ["query"],
         "additionalProperties": false

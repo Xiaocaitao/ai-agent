@@ -4,6 +4,8 @@ import { pathToFileURL } from "node:url";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 
+import { Ajv } from "ajv";
+import type { ErrorObject, ValidateFunction } from "ajv";
 import OpenAI from "openai";
 import { parse } from "smol-toml";
 
@@ -48,6 +50,13 @@ type AgentMessage = {
   tool_call_id?: string; // ?
 };
 type AssistantMessage = { content: string | null; tool_calls?: ToolCall[] };
+
+type ValidationDetail = {
+  path: string;
+  keyword: string;
+  message: string;
+  params: Record<string, unknown>;
+};
 
 // 鸭子类型，对openAI SDK 的最小约束
 type ChatClient = {
@@ -158,6 +167,11 @@ export async function loadTools(
     const name = String(entry.name ?? "");
     if (!name || name in handlers)
       throw new Error(`工具名称为空或重复: ${name}`);
+    const parameters = record(entry.parameters);
+    if (Object.keys(parameters).length === 0)
+      throw new Error(`工具 ${name} 缺少参数 Schema`);
+    if (parameters.type !== "object")
+      throw new Error(`工具 ${name} 参数 Schema 必须声明 type: object`);
     try {
       const moduleName = String(entry.module ?? "");
       if (
@@ -186,10 +200,7 @@ export async function loadTools(
       function: {
         name,
         description: String(entry.description ?? ""),
-        parameters:
-          Object.keys(record(entry.parameters)).length > 0
-            ? record(entry.parameters)
-            : { type: "object", properties: {}, additionalProperties: false },
+        parameters,
       },
     });
   }
@@ -230,6 +241,16 @@ async function toolResult(
   return typeof result === "string" ? result : JSON.stringify(result);
 }
 
+function validationFailure(errors: ErrorObject[] | null | undefined): string {
+  const details: ValidationDetail[] = (errors ?? []).map((error) => ({
+    path: error.instancePath || "$",
+    keyword: error.keyword,
+    message: error.message ?? "参数不符合 Schema",
+    params: error.params,
+  }));
+  return JSON.stringify({ ok: false, error: "工具参数校验失败", details });
+}
+
 export class ReActAgent {
   // readonly外部可读，但不能重新赋值
   readonly messages: AgentMessage[]; // 对话历史
@@ -237,6 +258,7 @@ export class ReActAgent {
   private readonly model: string; // 模型名
   private readonly toolSpecs: ToolSpec[]; // 工具定义列表
   private readonly handlers: Record<string, ToolHandler>; // 工具名-->处理函数
+  private readonly validators: Map<string, ValidateFunction>; // 工具名-->参数校验函数
   private readonly maxSteps: number; // 最大步数上限
 
   constructor(
@@ -251,6 +273,29 @@ export class ReActAgent {
     this.model = model;
     this.toolSpecs = toolSpecs;
     this.handlers = handlers;
+    const ajv = new Ajv({
+      allErrors: true,
+      coerceTypes: false,
+      removeAdditional: false,
+      useDefaults: false,
+    });
+    this.validators = new Map();
+    for (const spec of toolSpecs) {
+      const name = spec.function.name;
+      if (spec.function.parameters.type !== "object")
+        throw new Error(`工具 ${name} 参数 Schema 必须声明 type: object`);
+      try {
+        this.validators.set(name, ajv.compile(spec.function.parameters));
+      } catch (error) {
+        throw new Error(
+          `工具 ${name} 参数 Schema 非法: ${error instanceof Error ? error.message : error}`,
+        );
+      }
+    }
+    for (const name of Object.keys(handlers)) {
+      if (!this.validators.has(name))
+        throw new Error(`工具 ${name} 缺少参数 Schema`);
+    }
     this.maxSteps = maxSteps;
     this.messages = [{ role: "system", content: systemPrompt }];
   }
@@ -290,18 +335,24 @@ export class ReActAgent {
           try {
             // 参数解析
             const argumentsValue: unknown = JSON.parse(rawArguments);
-            if (
-              !argumentsValue ||
-              typeof argumentsValue !== "object" ||
-              Array.isArray(argumentsValue)
-            ) {
-              throw new Error("参数必须是 JSON 对象");
+            const validate = this.validators.get(name);
+            if (!validate) {
+              observation = validationFailure([{
+                instancePath: "",
+                schemaPath: "",
+                keyword: "schema",
+                params: { tool: name },
+                message: `工具 ${name} 缺少参数 Schema`,
+              }]);
+            } else if (!validate(argumentsValue)) {
+              observation = validationFailure(validate.errors);
+            } else {
+              // 工具执行
+              observation = await toolResult(
+                this.handlers[name] as ToolHandler,
+                argumentsValue as Record<string, unknown>,
+              );
             }
-            // 工具执行
-            observation = await toolResult(
-              this.handlers[name] as ToolHandler,
-              argumentsValue as Record<string, unknown>,
-            );
           } catch (error) {
             observation =
               error instanceof SyntaxError
