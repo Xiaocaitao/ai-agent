@@ -7,18 +7,12 @@ import { stdin, stdout } from "node:process";
 import { Ajv } from "ajv";
 import type { ErrorObject, ValidateFunction } from "ajv";
 import OpenAI from "openai";
-import { parse } from "smol-toml";
 
+import { loadRuntime } from "./config.ts";
 import { configureWorkspace } from "./tools/index.ts";
 
 //根目录路径
 const BASE_DIR = import.meta.dirname;
-
-// LLM提供商
-type Provider = { AGENT_API_KEY: string; base_url: string; model: string };
-
-// 运行时配置，LLM提供商，系统提示词，最大执行步数
-export type Runtime = { provider: Provider; prompt: string; maxSteps: number };
 
 // 工具处理函数，接收参数kv，对外返回任意值或者Promise支持同步/异步
 export type ToolHandler = (
@@ -81,17 +75,6 @@ function record(value: unknown): Record<string, unknown> {
     : {};
 }
 
-// 读TOML配置
-async function readToml(filePath: string): Promise<Record<string, unknown>> {
-  try {
-    return record(parse(await readFile(filePath, "utf8")));
-  } catch (error) {
-    throw new Error(
-      `无法读取配置文件 ${path.basename(filePath)}: ${error instanceof Error ? error.message : error}`,
-    );
-  }
-}
-
 // 读JSON配置
 async function readJson(filePath: string): Promise<Record<string, unknown>> {
   try {
@@ -112,49 +95,6 @@ export async function resolveWorkspace(value: string): Promise<string> {
   } catch {
     throw new Error(`工作目录不存在或不是目录: ${workspace}`);
   }
-}
-
-export async function loadRuntime(root = BASE_DIR): Promise<Runtime> {
-  const configDir = path.join(root, "config");
-  const config = await readToml(path.join(configDir, "settings.toml"));
-  // 左边为null或者undefined才使用右边
-  const providerName = String(config.active_provider ?? "");
-  const provider = record(record(config.providers)[providerName]);
-  if (Object.keys(provider).length === 0)
-    throw new Error(`未找到供应商配置: ${providerName}`);
-  // 查配置缺不缺
-  for (const key of ["AGENT_API_KEY", "base_url", "model"] as const) {
-    if (!provider[key])
-      throw new Error(`供应商 ${providerName} 缺少配置: ${key}`);
-  }
-
-  const agentConfig = record(config.agent);
-  // 读system prompt
-  const promptName = String(agentConfig.prompt ?? "");
-  const prompts = await readToml(path.join(configDir, "prompts.toml"));
-  const promptConfig = record(record(prompts.prompts)[promptName]);
-  if (!promptConfig.path) throw new Error(`未找到 Prompt 配置: ${promptName}`);
-  const promptPath = path.resolve(configDir, String(promptConfig.path));
-  const relative = path.relative(configDir, promptPath);
-  if (relative === ".." || relative.startsWith(`..${path.sep}`))
-    throw new Error("Prompt 路径不能超出项目目录");
-  let prompt: string;
-  try {
-    prompt = await readFile(promptPath, "utf8");
-  } catch (error) {
-    throw new Error(
-      `无法读取 Prompt: ${promptPath}: ${error instanceof Error ? error.message : error}`,
-    );
-  }
-
-  const maxSteps = agentConfig.max_steps ?? 10;
-  if (!Number.isInteger(maxSteps) || Number(maxSteps) < 1)
-    throw new Error("max_steps 必须是正整数");
-  return {
-    provider: provider as Provider,
-    prompt,
-    maxSteps: Number(maxSteps),
-  };
 }
 
 export async function loadTools(
