@@ -33,10 +33,35 @@ test("CLI 审批输入映射为 once、session 和 reject", async () => {
     { question: async () => answers.shift() ?? "n" },
     lines.push.bind(lines),
   );
-  const request = { toolName: "write_file", arguments: {}, summary: "写入 a.ts" };
+  const request = {
+    toolName: "write_file",
+    arguments: {},
+    summary: "写入 a.ts",
+    canRemember: true,
+  };
 
   assert.equal(await prompt(request), "once");
   assert.equal(await prompt(request), "session");
   assert.equal(await prompt(request), "reject");
   assert.ok(lines.some((line) => line.includes("请输入 y、s 或 n")));
+});
+
+test("CLI 对不能会话授权的请求不展示 session 选项", async () => {
+  const lines: string[] = [];
+  const prompt = createApprovalPrompt(
+    { question: async () => "y" },
+    lines.push.bind(lines),
+  );
+
+  assert.equal(
+    await prompt({
+      toolName: "run_command",
+      arguments: {},
+      summary: "执行 bash -c echo ok",
+      canRemember: false,
+    }),
+    "once",
+  );
+  assert.ok(lines.some((line) => line.includes("[y] 仅本次允许  [n] 拒绝")));
+  assert.equal(lines.some((line) => line.includes("[s]")), false);
 });

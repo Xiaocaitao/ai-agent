@@ -18,15 +18,18 @@ export function createApprovalPrompt(
   terminal: Questioner,
   output: (line: string) => void = console.log,
 ): ApprovalPrompt {
+  // CLI 只负责展示和收集选择；是否能记住授权由 PermissionEngine 的安全资源键决定。
   return async (request: ApprovalRequest) => {
     output(`\n权限审批：${request.summary}`);
-    output("[y] 仅本次允许  [s] 本会话允许  [n] 拒绝");
+    output(request.canRemember
+      ? `[y] 仅本次允许  [s] 本会话允许${request.sessionLabel ? `（${request.sessionLabel}）` : ""}  [n] 拒绝`
+      : "[y] 仅本次允许  [n] 拒绝");
     while (true) {
       const answer = (await terminal.question("选择: ")).trim().toLocaleLowerCase();
       if (answer === "y") return "once";
-      if (answer === "s") return "session";
+      if (answer === "s" && request.canRemember) return "session";
       if (answer === "n") return "reject";
-      output("请输入 y、s 或 n。");
+      output(request.canRemember ? "请输入 y、s 或 n。" : "请输入 y 或 n。");
     }
   };
 }

@@ -1,9 +1,7 @@
 import { spawn } from "node:child_process";
-import path from "node:path";
 
 import { failure, success, truncate, workspacePath } from "./_common.ts";
-
-const DELETE_COMMANDS = new Set(["rm", "rmdir", "unlink", "del", "rd", "remove-item"]);
+import { commandPolicy } from "./permissions.ts";
 
 type CommandData = {
   stdout: string;
@@ -36,10 +34,9 @@ export async function runCommand(
   ) {
     return failure("timeout 必须在 1 到 120 秒之间");
   }
-  const executable = path.basename(args[0] as string).toLocaleLowerCase();
-  if (DELETE_COMMANDS.has(executable) || (executable === "git" && args[1]?.toLocaleLowerCase() === "clean")) {
-    return failure("终端工具不允许执行文件删除命令");
-  }
+  // Handler 层复用权限分类器做第二次检查，避免未来直接调用 runCommand 时绕过上游权限门。
+  const policy = commandPolicy(args as string[]);
+  if (policy.dangerous) return failure(policy.reason ?? "终端工具不允许执行危险命令");
 
   try {
     const [workdir, relativeCwd] = await workspacePath(cwd);

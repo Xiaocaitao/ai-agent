@@ -64,3 +64,53 @@ test("deny 和审批异常返回拒绝结果", async () => {
   assert.equal(result.allowed, false);
   assert.match(result.reason ?? "", /审批失败/);
 });
+
+test("Shell 和解释器调用不能获得会话授权", async () => {
+  let approvals = 0;
+  const engine = new PermissionEngine(
+    { run_command: "ask" },
+    async () => {
+      approvals += 1;
+      return "session";
+    },
+  );
+
+  for (const args of [
+    ["bash", "-c", "echo ok"],
+    ["python3", "-c", "print('ok')"],
+    ["node", "-e", "console.log('ok')"],
+  ]) {
+    assert.equal((await engine.authorize("run_command", { args })).allowed, true);
+    assert.equal((await engine.authorize("run_command", { args })).allowed, true);
+  }
+  assert.equal(approvals, 6);
+});
+
+test("安全命令前缀可以获得受限会话授权", async () => {
+  let approvals = 0;
+  const engine = new PermissionEngine(
+    { run_command: "ask" },
+    async () => {
+      approvals += 1;
+      return "session";
+    },
+  );
+
+  assert.equal((await engine.authorize("run_command", { args: ["git", "status"] })).allowed, true);
+  assert.equal((await engine.authorize("run_command", { args: ["git", "status", "--short"] })).allowed, true);
+  assert.equal((await engine.authorize("run_command", { args: ["git", "diff"] })).allowed, true);
+  assert.equal(approvals, 2);
+});
+
+test("Shell 中明确的删除命令强制 deny", async () => {
+  const engine = new PermissionEngine(
+    { run_command: "ask" },
+    async () => "session",
+  );
+
+  const result = await engine.authorize("run_command", {
+    args: ["bash", "-c", "rm rejected.txt"],
+  });
+  assert.equal(result.allowed, false);
+  assert.equal(result.action, "deny");
+});
