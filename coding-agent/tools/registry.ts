@@ -5,6 +5,9 @@ import { pathToFileURL } from "node:url";
 import { Ajv } from "ajv";
 import type { ErrorObject, ValidateFunction } from "ajv";
 
+import { PermissionEngine } from "./permissions.ts";
+import type { ApprovalPrompt, PermissionAction } from "./permissions.ts";
+
 const BASE_DIR = path.resolve(import.meta.dirname, "..");
 
 export type ToolHandler = (
@@ -61,10 +64,18 @@ export class ToolRegistry {
   readonly specs: ToolSpec[];
   private readonly handlers: Record<string, ToolHandler>;
   private readonly validators = new Map<string, ValidateFunction>();
+  private readonly permissions: PermissionEngine;
 
-  constructor(specs: ToolSpec[], handlers: Record<string, ToolHandler>) {
+  constructor(
+    specs: ToolSpec[],
+    handlers: Record<string, ToolHandler>,
+    permissions = new PermissionEngine(
+      Object.fromEntries(specs.map((spec) => [spec.function.name, "allow"])),
+    ),
+  ) {
     this.specs = specs;
     this.handlers = handlers;
+    this.permissions = permissions;
     const ajv = new Ajv({
       allErrors: true,
       coerceTypes: false,
@@ -105,6 +116,21 @@ export class ToolRegistry {
         }]);
       }
       if (!validate(argumentsValue)) return validationFailure(validate.errors);
+      const permission = await this.permissions.authorize(
+        name,
+        argumentsValue as Record<string, unknown>,
+      );
+      if (!permission.allowed) {
+        return JSON.stringify({
+          ok: false,
+          error: "工具执行被权限策略拒绝",
+          permission: {
+            action: permission.action,
+            tool: name,
+            reason: permission.reason,
+          },
+        });
+      }
       const result = await handler(argumentsValue as Record<string, unknown>);
       return typeof result === "string" ? result : JSON.stringify(result);
     } catch (error) {
@@ -115,10 +141,14 @@ export class ToolRegistry {
   }
 }
 
-export async function loadTools(root = BASE_DIR): Promise<ToolRegistry> {
-  const entries = read(
-    (await readJson(path.join(root, "config/tools.json"))).tools,
-  );
+export async function loadTools(
+  root = BASE_DIR,
+  approvalPrompt?: ApprovalPrompt,
+): Promise<ToolRegistry> {
+  const configuration = await readJson(path.join(root, "config/tools.json"));
+  const entries = read(configuration.tools);
+  const configuredPermissions = record(configuration.permissions);
+  const policies: Record<string, PermissionAction> = {};
   const specs: ToolSpec[] = [];
   const handlers: Record<string, ToolHandler> = {};
   for (const rawEntry of entries) {
@@ -127,6 +157,10 @@ export async function loadTools(root = BASE_DIR): Promise<ToolRegistry> {
     const name = String(entry.name ?? "");
     if (!name || name in handlers)
       throw new Error(`工具名称为空或重复: ${name}`);
+    const permission = configuredPermissions[name];
+    if (!["allow", "ask", "deny"].includes(String(permission)))
+      throw new Error(`工具 ${name} 权限配置缺失或非法`);
+    policies[name] = permission as PermissionAction;
     const parameters = record(entry.parameters);
     if (Object.keys(parameters).length === 0)
       throw new Error(`工具 ${name} 缺少参数 Schema`);
@@ -164,5 +198,9 @@ export async function loadTools(root = BASE_DIR): Promise<ToolRegistry> {
       },
     });
   }
-  return new ToolRegistry(specs, handlers);
+  return new ToolRegistry(
+    specs,
+    handlers,
+    new PermissionEngine(policies, approvalPrompt),
+  );
 }

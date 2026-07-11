@@ -35,6 +35,18 @@
 | `write_file` | 创建或完整覆盖工作区内的 UTF-8 文本文件。 |
 | `run_command` | 执行一次非 Shell 命令并返回输出和退出码。 |
 
+## 工具权限
+
+`config/tools.json` 的顶层 `permissions` 为每个启用工具声明权限：
+
+- `allow`：无需确认直接执行。
+- `ask`：执行前询问，可选择仅本次允许、本会话允许或拒绝。
+- `deny`：始终拒绝执行。
+
+当前默认允许读取和搜索，写文件与运行命令需要审批。会话授权按文件路径或可执行程序保存，进程退出后失效；删除命令、`git clean` 和 `git reset --hard` 始终拒绝，不能被会话授权覆盖。
+
+这套机制是应用层审批，不等同于 OS 沙箱。它不能彻底识别解释器内嵌代码，也不能限制获批子进程的网络访问。
+
 ## 配置说明
 
 在 `config/settings.toml` 中设置 `active_provider`，并在对应的 `providers` 配置段填写 `AGENT_API_KEY`、`base_url` 和 `model`。`agent.max_steps` 用于限制单次对话最多执行的模型步骤数，必须是正整数。

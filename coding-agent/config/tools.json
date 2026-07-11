@@ -1,4 +1,10 @@
 {
+  "permissions": {
+    "run_command": "ask",
+    "read_file": "allow",
+    "write_file": "ask",
+    "search_files": "allow"
+  },
   "tools": [
     {
       "name": "run_command",

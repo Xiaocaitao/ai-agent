@@ -21,7 +21,7 @@ export function message(content: string | null = null, toolCalls: ReturnType<typ
 export async function createTestAgent(...responses: ReturnType<typeof message>[]) {
   const root = await mkdtemp(path.join(tmpdir(), "coding-agent-schema-test-"));
   configureWorkspace(root);
-  const tools = await loadTools();
+  const tools = await loadTools(undefined, async () => "once");
   const calls: unknown[] = [];
   const client = {
     chat: {

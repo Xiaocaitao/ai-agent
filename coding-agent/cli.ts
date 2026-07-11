@@ -8,6 +8,28 @@ import { ReActAgent } from "./runtime.ts";
 import type { ChatClient } from "./runtime.ts";
 import { configureWorkspace } from "./tools/index.ts";
 import { loadTools } from "./tools/registry.ts";
+import type { ApprovalPrompt, ApprovalRequest } from "./tools/permissions.ts";
+
+type Questioner = {
+  question(prompt: string): Promise<string>;
+};
+
+export function createApprovalPrompt(
+  terminal: Questioner,
+  output: (line: string) => void = console.log,
+): ApprovalPrompt {
+  return async (request: ApprovalRequest) => {
+    output(`\n权限审批：${request.summary}`);
+    output("[y] 仅本次允许  [s] 本会话允许  [n] 拒绝");
+    while (true) {
+      const answer = (await terminal.question("选择: ")).trim().toLocaleLowerCase();
+      if (answer === "y") return "once";
+      if (answer === "s") return "session";
+      if (answer === "n") return "reject";
+      output("请输入 y、s 或 n。");
+    }
+  };
+}
 
 // CLI 主函数：组装运行环境、创建 Agent、进入 REPL 循环
 export async function runCli(): Promise<void> {
@@ -15,26 +37,26 @@ export async function runCli(): Promise<void> {
   const workspace = configureWorkspace(process.argv[2] ?? ".");
   // 2. 加载运行时配置（provider / prompt / maxSteps）
   const runtime = await loadRuntime();
-  // 3. 加载工具注册表（从 config/tools.json 读取工具列表并动态 import handler）
-  const tools = await loadTools();
-  // 4. 创建 OpenAI 兼容客户端（支持任意兼容 API 的服务）
-  const client = new OpenAI({
-    apiKey: runtime.provider.AGENT_API_KEY,
-    baseURL: runtime.provider.base_url,
-  }) as unknown as ChatClient;
-  // 5. 创建 ReAct Agent
-  const agent = new ReActAgent(
-    client,
-    runtime.provider.model,
-    runtime.prompt,
-    tools,
-    runtime.maxSteps,
-  );
-  console.log(`ReAct Agent 已启动，工作目录: ${workspace}`);
-  console.log("输入 exit 或 quit 退出。");
-  // 6. 创建 readline 终端交互界面
+  // 3. 创建 readline，既处理主对话，也处理工具审批
   const terminal = createInterface({ input: stdin, output: stdout });
   try {
+    // 4. 加载工具，并将终端审批回调注入统一权限系统
+    const tools = await loadTools(undefined, createApprovalPrompt(terminal));
+    // 5. 创建 OpenAI 兼容客户端（支持任意兼容 API 的服务）
+    const client = new OpenAI({
+      apiKey: runtime.provider.AGENT_API_KEY,
+      baseURL: runtime.provider.base_url,
+    }) as unknown as ChatClient;
+    // 6. 创建 ReAct Agent
+    const agent = new ReActAgent(
+      client,
+      runtime.provider.model,
+      runtime.prompt,
+      tools,
+      runtime.maxSteps,
+    );
+    console.log(`ReAct Agent 已启动，工作目录: ${workspace}`);
+    console.log("输入 exit 或 quit 退出。");
     // 7. REPL 主循环
     while (true) {
       const userInput = (await terminal.question("You: ")).trim();
