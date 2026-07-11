@@ -11,6 +11,7 @@ test("工具缺少参数 Schema 时拒绝加载", async () => {
   await mkdir(path.join(root, "config"));
   await mkdir(path.join(root, "tools"));
   await writeFile(path.join(root, "config/tools.json"), JSON.stringify({
+    permissions: { echo: "allow" },
     tools: [{ name: "echo", module: "tools.echo", function: "echo" }],
   }));
   await writeFile(path.join(root, "tools/echo.ts"), "export function echo() { return 'ok'; }\n");
