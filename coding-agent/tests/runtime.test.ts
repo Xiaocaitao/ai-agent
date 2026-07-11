@@ -153,3 +153,45 @@ test("ReActAgent 达到最大步骤时停止", async () => {
     /最大步骤/,
   );
 });
+
+test("ReActAgent 累计本次会话的模型 Token 用量", async () => {
+  const responses = [
+    { choices: [{ message: message(null, [toolCall()]) }], usage: { prompt_tokens: 10, completion_tokens: 4, total_tokens: 14 } },
+    { choices: [{ message: message("finished") }], usage: { prompt_tokens: 20, completion_tokens: 6, total_tokens: 26 } },
+  ];
+  const client = {
+    chat: { completions: { create: async () => responses.shift()! } },
+  };
+  const agent = new ReActAgent(
+    client,
+    "model-x",
+    "prompt",
+    new ToolRegistry(echoSpecs, { echo: () => "ok" }),
+    3,
+  );
+
+  await agent.runTurn("run", () => undefined);
+  assert.deepEqual(agent.tokenUsage, {
+    inputTokens: 30,
+    outputTokens: 10,
+    totalTokens: 40,
+  });
+});
+
+test("ReActAgent 在供应商未返回 usage 时按零累计", async () => {
+  const { client } = fakeClient(message("finished"));
+  const agent = new ReActAgent(
+    client,
+    "model-x",
+    "prompt",
+    new ToolRegistry([], {}),
+    1,
+  );
+
+  await agent.runTurn("run", () => undefined);
+  assert.deepEqual(agent.tokenUsage, {
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+  });
+});

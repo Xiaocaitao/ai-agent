@@ -5,7 +5,7 @@ import OpenAI from "openai";
 
 import { loadRuntime } from "./config.ts";
 import { ReActAgent } from "./runtime.ts";
-import type { ChatClient } from "./runtime.ts";
+import type { ChatClient, TokenUsage } from "./runtime.ts";
 import { configureWorkspace } from "./tools/index.ts";
 import { loadTools } from "./tools/registry.ts";
 import type { ApprovalPrompt, ApprovalRequest } from "./tools/permissions.ts";
@@ -13,6 +13,15 @@ import type { ApprovalPrompt, ApprovalRequest } from "./tools/permissions.ts";
 type Questioner = {
   question(prompt: string): Promise<string>;
 };
+
+export function formatTokenUsage(usage: TokenUsage): string {
+  return [
+    "本次会话 Token 用量：",
+    `输入：${usage.inputTokens}`,
+    `输出：${usage.outputTokens}`,
+    `总计：${usage.totalTokens}`,
+  ].join("\n");
+}
 
 export function createApprovalPrompt(
   terminal: Questioner,
@@ -74,6 +83,7 @@ export async function runCli(): Promise<void> {
         );
       }
     }
+    console.log(formatTokenUsage(agent.tokenUsage));
   } finally {
     terminal.close();
   }

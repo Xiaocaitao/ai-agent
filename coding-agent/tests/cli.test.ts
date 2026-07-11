@@ -6,7 +6,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 
-import { createApprovalPrompt } from "../cli.ts";
+import { createApprovalPrompt, formatTokenUsage } from "../cli.ts";
 
 const run = promisify(execFile);
 
@@ -64,4 +64,11 @@ test("CLI 对不能会话授权的请求不展示 session 选项", async () => {
   );
   assert.ok(lines.some((line) => line.includes("[y] 仅本次允许  [n] 拒绝")));
   assert.equal(lines.some((line) => line.includes("[s]")), false);
+});
+
+test("CLI 格式化退出时的 Token 汇总", () => {
+  assert.equal(
+    formatTokenUsage({ inputTokens: 1234, outputTokens: 567, totalTokens: 1801 }),
+    "本次会话 Token 用量：\n输入：1234\n输出：567\n总计：1801",
+  );
 });
