@@ -84,4 +84,21 @@ test("ToolRegistry 在权限拒绝时不执行 Handler", async () => {
   assert.equal(executed, false);
   assert.equal(observation.error, "工具执行被权限策略拒绝");
   assert.equal(observation.permission.action, "deny");
+  assert.equal(observation.permission.retryable, false);
+  assert.equal(observation.permission.must_not_bypass, true);
+  assert.equal(observation.permission.retry_scope, "never");
+});
+
+test("用户拒绝审批只阻止当前轮，后续请求可以重新审批", async () => {
+  const registry = new ToolRegistry(
+    [{ type: "function", function: { name: "write", parameters: { type: "object" } } }],
+    { write: () => "ok" },
+    new PermissionEngine({ write: "ask" }, async () => "reject"),
+  );
+
+  const observation = JSON.parse(await registry.execute("write", "{}"));
+  assert.equal(observation.permission.action, "ask");
+  assert.equal(observation.permission.retryable, false);
+  assert.equal(observation.permission.retry_scope, "current_turn");
+  assert.equal(observation.permission.must_not_bypass, true);
 });

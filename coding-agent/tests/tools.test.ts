@@ -48,6 +48,7 @@ test("runCommand 不解释 shell 操作符并拦截删除命令", async () => {
   assert.match(String(literal.data.stdout), /&&/);
   assert.doesNotMatch(String(literal.data.stdout), /\nbad\n/);
   assert.equal((await runCommand(["rm", "file.txt"])).ok, false);
+  assert.equal((await runCommand(["bash", "-c", "rm file.txt"])).ok, false);
   assert.equal((await runCommand([process.execPath, "--version"], null, "../")).ok, false);
 });
 

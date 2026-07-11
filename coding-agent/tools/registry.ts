@@ -100,6 +100,7 @@ export class ToolRegistry {
     }
   }
 
+  // 统一执行入口：参数先校验、权限后判断，只有两者通过才能调用实际 Handler。
   async execute(name: string, rawArguments: string): Promise<string> {
     const handler = this.handlers[name];
     if (!handler) return `未注册工具: ${name}`;
@@ -121,6 +122,8 @@ export class ToolRegistry {
         argumentsValue as Record<string, unknown>,
       );
       if (!permission.allowed) {
+        // 用户拒绝 ask 只限制当前 ReAct 轮；配置或危险规则 deny 对后续轮次仍然有效。
+        const retryScope = permission.action === "ask" ? "current_turn" : "never";
         return JSON.stringify({
           ok: false,
           error: "工具执行被权限策略拒绝",
@@ -128,6 +131,9 @@ export class ToolRegistry {
             action: permission.action,
             tool: name,
             reason: permission.reason,
+            retryable: false,
+            must_not_bypass: true,
+            retry_scope: retryScope,
           },
         });
       }
