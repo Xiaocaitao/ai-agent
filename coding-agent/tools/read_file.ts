@@ -24,5 +24,9 @@ export async function readFileTool(path: string, startLine = 1, maxLines = 200) 
   }
 }
 
-export const read_file = ({ path, start_line = 1, max_lines = 200 }: Record<string, unknown>) =>
+export const read_file = ({
+  path,
+  start_line = 1,
+  max_lines = 200,
+}: Record<string, unknown>) =>
   readFileTool(String(path ?? ""), Number(start_line), Number(max_lines));

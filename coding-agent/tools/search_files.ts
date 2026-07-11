@@ -1,19 +1,33 @@
 import { open, opendir, readFile } from "node:fs/promises";
 import path, { matchesGlob } from "node:path";
 
-import { getWorkspaceRoot, IGNORED_DIRS, MAX_SEARCH_RESULTS, failure, success, workspacePath } from "./_common.ts";
+import {
+  getWorkspaceRoot,
+  IGNORED_DIRS,
+  MAX_SEARCH_RESULTS,
+  failure,
+  success,
+  workspacePath,
+} from "./_common.ts";
 
 type Match = { path: string; line: number; text: string };
 
-export async function searchFiles(query: unknown, searchPath = ".", pattern = "*") {
-  if (typeof query !== "string" || query.length === 0) return failure("query 必须是非空字符串");
-  if (typeof pattern !== "string" || pattern.length === 0) return failure("pattern 必须是非空字符串");
+export async function searchFiles(
+  query: unknown,
+  searchPath = ".",
+  pattern = "*",
+) {
+  if (typeof query !== "string" || query.length === 0)
+    return failure("query 必须是非空字符串");
+  if (typeof pattern !== "string" || pattern.length === 0)
+    return failure("pattern 必须是非空字符串");
   try {
     const searchQuery = query;
     const [root] = await workspacePath(searchPath);
     const matches: Match[] = [];
 
     async function visit(directory: string): Promise<boolean> {
+      // 异步迭代目录
       for await (const entry of await opendir(directory)) {
         if (entry.isSymbolicLink()) continue;
         const filePath = path.join(directory, entry.name);
@@ -53,5 +67,9 @@ export async function searchFiles(query: unknown, searchPath = ".", pattern = "*
   }
 }
 
-export const search_files = ({ query, path = ".", pattern = "*" }: Record<string, unknown>) =>
+export const search_files = ({
+  query,
+  path = ".",
+  pattern = "*",
+}: Record<string, unknown>) =>
   searchFiles(query, String(path), String(pattern));

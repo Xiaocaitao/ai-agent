@@ -27,4 +27,5 @@ export async function writeFileTool(filePath: string, content: unknown) {
   }
 }
 
-export const write_file = ({ path, content }: Record<string, unknown>) => writeFileTool(String(path ?? ""), content);
+export const write_file = ({ path, content }: Record<string, unknown>) =>
+  writeFileTool(String(path ?? ""), content);

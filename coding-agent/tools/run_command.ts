@@ -13,12 +13,27 @@ type CommandData = {
   truncated: boolean;
 };
 
-export async function runCommand(args: unknown, stdin: unknown = null, cwd = ".", timeout = 30) {
-  if (!Array.isArray(args) || args.length === 0 || !args.every((item) => typeof item === "string")) {
+export async function runCommand(
+  args: unknown,
+  stdin: unknown = null,
+  cwd = ".",
+  timeout = 30,
+) {
+  if (
+    !Array.isArray(args) ||
+    args.length === 0 ||
+    !args.every((item) => typeof item === "string")
+  ) {
     return failure("args 必须是非空字符串数组");
   }
-  if (stdin !== null && typeof stdin !== "string") return failure("stdin 必须是字符串或 null");
-  if (typeof timeout !== "number" || !Number.isFinite(timeout) || timeout < 1 || timeout > 120) {
+  if (stdin !== null && typeof stdin !== "string")
+    return failure("stdin 必须是字符串或 null");
+  if (
+    typeof timeout !== "number" ||
+    !Number.isFinite(timeout) ||
+    timeout < 1 ||
+    timeout > 120
+  ) {
     return failure("timeout 必须在 1 到 120 秒之间");
   }
   const executable = path.basename(args[0] as string).toLocaleLowerCase();
@@ -57,5 +72,10 @@ export async function runCommand(args: unknown, stdin: unknown = null, cwd = "."
   }
 }
 
-export const run_command = ({ args, stdin = null, cwd = ".", timeout = 30 }: Record<string, unknown>) =>
+export const run_command = ({
+  args,
+  stdin = null,
+  cwd = ".",
+  timeout = 30,
+}: Record<string, unknown>) =>
   runCommand(args, stdin, String(cwd), Number(timeout));

@@ -17,12 +17,14 @@ export type Runtime = {
   maxSteps: number;
 };
 
+// 安全地将 unknown 转 Record，非对象返回空对象
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
 }
 
+// 读取并解析 TOML 配置文件
 async function readToml(filePath: string): Promise<Record<string, unknown>> {
   try {
     return record(parse(await readFile(filePath, "utf8")));
@@ -33,9 +35,12 @@ async function readToml(filePath: string): Promise<Record<string, unknown>> {
   }
 }
 
+// 加载运行时配置：从 config/ 目录读取 settings.toml 和 prompts.toml
 export async function loadRuntime(root = BASE_DIR): Promise<Runtime> {
   const configDir = path.join(root, "config");
+  // 1. 读取 settings.toml，获取 active_provider 和 agent 配置
   const config = await readToml(path.join(configDir, "settings.toml"));
+  // 2. 根据 active_provider 读取对应供应商的 API Key、base_url、model
   const providerName = String(config.active_provider ?? "");
   const provider = record(record(config.providers)[providerName]);
   if (Object.keys(provider).length === 0)
@@ -45,12 +50,14 @@ export async function loadRuntime(root = BASE_DIR): Promise<Runtime> {
       throw new Error(`供应商 ${providerName} 缺少配置: ${key}`);
   }
 
+  // 3. 读取 prompts.toml，根据 agent.prompt 字段加载对应的系统提示词文件
   const agentConfig = record(config.agent);
   const promptName = String(agentConfig.prompt ?? "");
   const prompts = await readToml(path.join(configDir, "prompts.toml"));
   const promptConfig = record(record(prompts.prompts)[promptName]);
   if (!promptConfig.path) throw new Error(`未找到 Prompt 配置: ${promptName}`);
   const promptPath = path.resolve(configDir, String(promptConfig.path));
+  // 防止 prompt 路径 ../ 越界读取 config 目录外的文件
   const relative = path.relative(configDir, promptPath);
   if (relative === ".." || relative.startsWith(`..${path.sep}`))
     throw new Error("Prompt 路径不能超出项目目录");
@@ -64,6 +71,7 @@ export async function loadRuntime(root = BASE_DIR): Promise<Runtime> {
     );
   }
 
+  // 4. 读取 agent.max_steps，默认 10，必须为正整数
   const maxSteps = agentConfig.max_steps ?? 10;
   if (!Number.isInteger(maxSteps) || Number(maxSteps) < 1)
     throw new Error("max_steps 必须是正整数");

@@ -1,3 +1,4 @@
+// 入口文件：仅负责启动 CLI 主循环
 import { runCli } from "./cli.ts";
 
 if (import.meta.main) {
