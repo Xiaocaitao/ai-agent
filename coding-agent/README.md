@@ -10,6 +10,13 @@
 
 ## 功能更新日志
 
+### 2026-07-12
+
+- `run_command` 接入 macOS Seatbelt：所有获批命令统一通过 `/usr/bin/sandbox-exec` 启动，限制自动继承到 Shell、Python、Node 等后代进程。
+- 默认只允许写当前工作区和 `/private/tmp`，拒绝用户主目录、`.ssh`、`.aws`、`.env` 和 Agent 可信配置等敏感读取，并默认关闭子进程网络、Apple Events 和任意 Unix Socket。
+- 子进程环境改为最小白名单，不再传入 API Key、Token、Password、SSH Agent 和代理凭据；沙箱或 Profile 不可用时 CLI 直接终止，不降级执行裸命令。
+- 增加 `npm run test:sandbox`，从普通 macOS Terminal 验证工作区内写入、工作区外读写拒绝、多层子进程网络拒绝和敏感环境变量清理。
+
 ### 2026-07-11
 
 - 增加统一的 `allow / ask / deny` 工具审批：读取和搜索默认允许，写文件与命令执行需要用户选择仅本次、本会话允许或拒绝；危险命令会被系统直接拒绝。
@@ -52,7 +59,26 @@
 
 当前默认允许读取和搜索，写文件与运行命令需要审批。会话授权按文件路径或可执行程序保存，进程退出后失效；删除命令、`git clean` 和 `git reset --hard` 始终拒绝，不能被会话授权覆盖。
 
-这套机制是应用层审批，不等同于 OS 沙箱。它不能彻底识别解释器内嵌代码，也不能限制获批子进程的网络访问。
+审批与 OS 沙箱是两层机制：审批决定用户是否同意尝试执行，Seatbelt 决定获批进程技术上最多能访问什么。系统 `deny` 不会被用户审批覆盖，用户批准也不会扩大 Seatbelt 的文件和网络边界。
+
+## macOS 沙箱
+
+`run_command` 当前只支持 macOS。CLI 启动时检查 `/usr/bin/sandbox-exec` 和 `sandbox/macos-workspace.sb`，任一不可用都会失败关闭。
+
+普通单元测试：
+
+```bash
+npm test
+npm run typecheck
+```
+
+真实 Seatbelt 边界测试必须从未被其他沙箱包裹的普通 Terminal 执行：
+
+```bash
+npm run test:sandbox
+```
+
+Seatbelt 只保护 `run_command` 启动的子进程。内置 `read_file`、`search_files` 和 `write_file` 仍使用应用层工作区路径校验，不会自动进入 OS 沙箱。
 
 ## Token 用量
 

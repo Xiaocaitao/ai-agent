@@ -26,6 +26,7 @@ export type SandboxedCommand = {
   sandboxed: true;
 };
 
+// macOS /usr/bin/sandbox-exec 存在 ../sandbox/macos-workspace.sb存在
 export function assertMacOsSandboxAvailable(
   executable: string = MACOS_SANDBOX_EXECUTABLE,
   profile: string = MACOS_SANDBOX_PROFILE,
@@ -36,6 +37,7 @@ export function assertMacOsSandboxAvailable(
   accessSync(profile, constants.R_OK);
 }
 
+// 只允许白名单上的环境变量
 export function sanitizeChildEnvironment(
   environment: NodeJS.ProcessEnv,
 ): NodeJS.ProcessEnv {
@@ -52,15 +54,19 @@ export function sanitizeChildEnvironment(
   return result;
 }
 
+// 构造沙盒命令
 export function buildSandboxedCommand(
   command: string[],
   cwd: string,
   environment: NodeJS.ProcessEnv = process.env,
 ): SandboxedCommand {
+  // 判断是否支持沙盒
   assertMacOsSandboxAvailable();
   if (command.length === 0) throw new Error("沙箱命令不能为空");
 
+  // 解析为真实的工作目录路径
   const workspace = realpathSync(cwd);
+  // 家目录
   const home = realpathSync(homedir());
   const gitDir = path.join(workspace, ".git");
 
