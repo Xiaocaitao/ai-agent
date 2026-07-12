@@ -1,14 +1,44 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 
-import { createApprovalPrompt } from "../cli.ts";
+import {
+  createApprovalPrompt,
+  formatTokenUsage,
+  prepareCliWorkspace,
+} from "../cli.ts";
 
 const run = promisify(execFile);
+
+test("CLI 工作区有效时必须执行沙箱预检", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "coding-agent-cli-test-"));
+  let checked = false;
+
+  assert.equal(
+    prepareCliWorkspace(root, () => {
+      checked = true;
+    }),
+    realpathSync(root),
+  );
+  assert.equal(checked, true);
+});
+
+test("CLI 工作区无效时不继续执行沙箱预检", () => {
+  let checked = false;
+  assert.throws(
+    () =>
+      prepareCliWorkspace("/missing/coding-agent-workspace", () => {
+        checked = true;
+      }),
+    /工作目录不存在或不是目录/,
+  );
+  assert.equal(checked, false);
+});
 
 test("CLI 在工作目录无效时以配置错误退出", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "coding-agent-cli-test-"));
@@ -64,4 +94,11 @@ test("CLI 对不能会话授权的请求不展示 session 选项", async () => {
   );
   assert.ok(lines.some((line) => line.includes("[y] 仅本次允许  [n] 拒绝")));
   assert.equal(lines.some((line) => line.includes("[s]")), false);
+});
+
+test("CLI 格式化退出时的 Token 汇总", () => {
+  assert.equal(
+    formatTokenUsage({ inputTokens: 1234, outputTokens: 567, totalTokens: 1801 }),
+    "本次会话 Token 用量：\n输入：1234\n输出：567\n总计：1801",
+  );
 });

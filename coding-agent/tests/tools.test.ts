@@ -11,15 +11,27 @@ import {
   searchFiles,
   writeFileTool,
 } from "../tools/index.ts";
+import { executePreparedCommand } from "../tools/run_command.ts";
 
 async function temporaryDirectory(): Promise<string> {
   return mkdtemp(path.join(tmpdir(), "coding-agent-test-"));
 }
 
+function directCommand(args: string[]) {
+  return {
+    executable: args[0],
+    args: args.slice(1),
+    env: process.env,
+    sandboxed: false,
+  };
+}
+
 test("runCommand 传递 stdin 并返回 stdout", async () => {
-  const result = await runCommand(
-    [process.execPath, "-e", "process.stdin.on('data', data => process.stdout.write(data.toString().toUpperCase()))"],
+  const result = await executePreparedCommand(
+    directCommand([process.execPath, "-e", "process.stdin.on('data', data => process.stdout.write(data.toString().toUpperCase()))"]),
     "hello",
+    30,
+    process.cwd(),
   );
   assert.equal(result.ok, true);
   assert.equal(result.data.stdout, "HELLO");
@@ -27,24 +39,44 @@ test("runCommand 传递 stdin 并返回 stdout", async () => {
 });
 
 test("runCommand 报告非零退出码和 stderr", async () => {
-  const result = await runCommand([process.execPath, "-e", "console.error('bad'); process.exit(2)"]);
+  const result = await executePreparedCommand(
+    directCommand([process.execPath, "-e", "console.error('bad'); process.exit(2)"]),
+    null,
+    30,
+    process.cwd(),
+  );
   assert.equal(result.ok, false);
   assert.equal(result.data.exit_code, 2);
   assert.equal(result.data.stderr, "bad\n");
 });
 
 test("runCommand 支持超时和输出截断", async () => {
-  const timeout = await runCommand([process.execPath, "-e", "setTimeout(() => {}, 2000)"], null, ".", 1);
+  const timeout = await executePreparedCommand(
+    directCommand([process.execPath, "-e", "setTimeout(() => {}, 2000)"]),
+    null,
+    1,
+    process.cwd(),
+  );
   assert.equal(timeout.ok, false);
   assert.equal(timeout.data.timed_out, true);
 
-  const truncated = await runCommand([process.execPath, "-e", "process.stdout.write('x'.repeat(21000))"]);
+  const truncated = await executePreparedCommand(
+    directCommand([process.execPath, "-e", "process.stdout.write('x'.repeat(21000))"]),
+    null,
+    30,
+    process.cwd(),
+  );
   assert.equal(String(truncated.data.stdout).length, 20_000);
   assert.equal(truncated.data.truncated, true);
 });
 
 test("runCommand 不解释 shell 操作符并拦截删除命令", async () => {
-  const literal = await runCommand([process.execPath, "-e", "console.log(process.argv.slice(1))", "&&", "echo", "bad"]);
+  const literal = await executePreparedCommand(
+    directCommand([process.execPath, "-e", "console.log(process.argv.slice(1))", "&&", "echo", "bad"]),
+    null,
+    30,
+    process.cwd(),
+  );
   assert.match(String(literal.data.stdout), /&&/);
   assert.doesNotMatch(String(literal.data.stdout), /\nbad\n/);
   assert.equal((await runCommand(["rm", "file.txt"])).ok, false);

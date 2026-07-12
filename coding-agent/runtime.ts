@@ -18,6 +18,18 @@ export type AgentMessage = {
 // 模型原始返回的 assistant 消息
 type AssistantMessage = { content: string | null; tool_calls?: ToolCall[] };
 
+type ModelUsage = {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+};
+
+export type TokenUsage = {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+};
+
 // OpenAI 兼容 ChatClient 接口抽象
 export type ChatClient = {
   chat: {
@@ -27,6 +39,7 @@ export type ChatClient = {
           message: AssistantMessage;
           finish_reason?: string | null;
         }>;
+        usage?: ModelUsage;
       }>;
     };
   };
@@ -96,12 +109,23 @@ function finishReasonSuffix(value: string | null | undefined): string {
   return value ? `，finish_reason=${value}` : "";
 }
 
+function tokenCount(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? value
+    : 0;
+}
+
 export class ReActAgent {
   readonly messages: AgentMessage[];
   private readonly client: ChatClient;
   private readonly model: string;
   private readonly tools: ToolRegistry;
   private readonly maxSteps: number;
+  private readonly usage: TokenUsage = {
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+  };
 
   constructor(
     client: ChatClient,
@@ -115,6 +139,11 @@ export class ReActAgent {
     this.tools = tools;
     this.maxSteps = maxSteps;
     this.messages = [{ role: "system", content: systemPrompt }];
+  }
+
+  // 返回副本，避免 CLI 或其他调用方改写会话累计值。
+  get tokenUsage(): TokenUsage {
+    return { ...this.usage };
   }
 
   // 运行一轮对话：思考 → 动作 → 观察，最多 maxSteps 步
@@ -140,6 +169,11 @@ export class ReActAgent {
       const response = await this.client.chat.completions.create(
         sanitizeUnicode(request) as Record<string, unknown>,
       );
+      const inputTokens = tokenCount(response.usage?.prompt_tokens);
+      const outputTokens = tokenCount(response.usage?.completion_tokens);
+      this.usage.inputTokens += inputTokens;
+      this.usage.outputTokens += outputTokens;
+      this.usage.totalTokens += tokenCount(response.usage?.total_tokens) || inputTokens + outputTokens;
       const choice = response.choices[0];
       const message = choice?.message;
       if (!message) throw new Error("模型响应为空");
