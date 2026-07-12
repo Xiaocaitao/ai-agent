@@ -7,12 +7,23 @@ import { loadRuntime } from "./config.ts";
 import { ReActAgent } from "./runtime.ts";
 import type { ChatClient, TokenUsage } from "./runtime.ts";
 import { configureWorkspace } from "./tools/index.ts";
+import { assertMacOsSandboxAvailable } from "./tools/macos_sandbox.ts";
 import { loadTools } from "./tools/registry.ts";
 import type { ApprovalPrompt, ApprovalRequest } from "./tools/permissions.ts";
 
 type Questioner = {
   question(prompt: string): Promise<string>;
 };
+
+// 工作区必须先解析成功；随后沙箱预检失败时直接终止 CLI，禁止降级执行裸命令。
+export function prepareCliWorkspace(
+  value: string,
+  sandboxCheck: () => void = assertMacOsSandboxAvailable,
+): string {
+  const workspace = configureWorkspace(value);
+  sandboxCheck();
+  return workspace;
+}
 
 export function formatTokenUsage(usage: TokenUsage): string {
   return [
@@ -45,8 +56,8 @@ export function createApprovalPrompt(
 
 // CLI 主函数：组装运行环境、创建 Agent、进入 REPL 循环
 export async function runCli(): Promise<void> {
-  // 1. 解析并配置工作目录（默认当前目录）
-  const workspace = configureWorkspace(process.argv[2] ?? ".");
+  // 1. 解析工作目录并确认 macOS 沙箱可用（默认当前目录）
+  const workspace = prepareCliWorkspace(process.argv[2] ?? ".");
   // 2. 加载运行时配置（provider / prompt / maxSteps）
   const runtime = await loadRuntime();
   // 3. 创建 readline，既处理主对话，也处理工具审批

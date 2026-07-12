@@ -27,8 +27,8 @@ export type SandboxedCommand = {
 };
 
 export function assertMacOsSandboxAvailable(
-  executable = MACOS_SANDBOX_EXECUTABLE,
-  profile = MACOS_SANDBOX_PROFILE,
+  executable: string = MACOS_SANDBOX_EXECUTABLE,
+  profile: string = MACOS_SANDBOX_PROFILE,
 ): void {
   if (process.platform !== "darwin")
     throw new Error("OS 沙箱当前只支持 macOS");

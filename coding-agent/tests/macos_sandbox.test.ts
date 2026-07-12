@@ -16,6 +16,25 @@ test("macOS 沙箱依赖存在", () => {
   assert.equal(path.basename(MACOS_SANDBOX_PROFILE), "macos-workspace.sb");
 });
 
+test("sandbox-exec 或 Profile 缺失时 fail closed", () => {
+  assert.throws(
+    () =>
+      assertMacOsSandboxAvailable(
+        "/missing/sandbox-exec",
+        MACOS_SANDBOX_PROFILE,
+      ),
+    /ENOENT/,
+  );
+  assert.throws(
+    () =>
+      assertMacOsSandboxAvailable(
+        MACOS_SANDBOX_EXECUTABLE,
+        "/missing/profile.sb",
+      ),
+    /ENOENT/,
+  );
+});
+
 test("沙箱命令保持原始 argv，不引入外层 Shell", () => {
   const cwd = path.resolve(import.meta.dirname, "..");
   const original = ["/bin/echo", "a b", ";", "$(touch bad)", "line1\nline2"];
