@@ -23,6 +23,7 @@ export type SandboxedCommand = {
   executable: typeof MACOS_SANDBOX_EXECUTABLE;
   args: string[];
   env: NodeJS.ProcessEnv;
+  sandboxed: true;
 };
 
 export function assertMacOsSandboxAvailable(
@@ -89,5 +90,6 @@ export function buildSandboxedCommand(
       ...command,
     ],
     env: sanitizeChildEnvironment(environment),
+    sandboxed: true,
   };
 }
