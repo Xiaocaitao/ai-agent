@@ -1,0 +1,43 @@
+(version 1)
+(deny default)
+
+; 目标程序可以继续启动子进程，但只能操作同一沙箱内的进程。
+(allow process-exec)
+(allow process-fork)
+(allow signal (target same-sandbox))
+(allow process-info* (target same-sandbox))
+
+; v1 允许读取非用户目录，拒绝整个用户主目录后只重新开放工作区。
+; 这样可以兼容 macOS 动态链接器、Node、Python 和常用 CLI。
+(allow file-read*)
+(deny file-read* (subpath (param "HOME_DIR")))
+(allow file-read* (subpath (param "WORKSPACE")))
+
+; 即使工作区覆盖这些路径，敏感资源最终仍不可读。
+(deny file-read* (subpath (param "SSH_DIR")))
+(deny file-read* (subpath (param "AWS_DIR")))
+(deny file-read* (subpath (param "AGENT_CONFIG_DIR")))
+(deny file-read* (literal (param "WORKSPACE_ENV")))
+
+; 只允许工作区和固定临时目录写入。
+(allow file-write* (subpath (param "WORKSPACE")))
+(allow file-write* (subpath "/private/tmp"))
+
+; 工作区内也不能改写可扩大下一次运行权限的配置。
+(deny file-write* (subpath (param "GIT_HOOKS")))
+(deny file-write* (literal (param "GIT_CONFIG")))
+(deny file-write* (subpath (param "AGENT_CONFIG_DIR")))
+(deny file-write* (literal (param "SANDBOX_PROFILE")))
+(deny file-write* (literal (param "WORKSPACE_ENV")))
+
+; Node、Python 和常用 CLI 的最小运行能力。
+(allow sysctl-read)
+(allow ipc-posix-shm)
+(allow ipc-posix-sem)
+(allow mach-lookup
+  (global-name "com.apple.logd")
+  (global-name "com.apple.PowerManagement.control")
+  (global-name "com.apple.system.opendirectoryd.libinfo")
+  (global-name "com.apple.system.opendirectoryd.membership"))
+
+; network*、system-socket、appleevent-send 和 lsopen 故意不开放。
