@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { ReActAgent, sanitizeUnicode } from "../runtime.ts";
+import type { AgentMessage, SessionRecorder } from "../runtime.ts";
 import { ToolRegistry } from "../tools/registry.ts";
 import type { ToolHandler } from "../tools/registry.ts";
 
@@ -67,6 +68,115 @@ test("ReActAgent 无工具调用时返回最终回答", async () => {
   assert.equal(agent.messages.at(-1)?.content, "done");
 });
 
+test("ReActAgent 按顺序记录无工具的成功 Turn", async () => {
+  const events: unknown[] = [];
+  const recorder: SessionRecorder = {
+    startTurn: async (userInput) => {
+      events.push(["start", userInput]);
+      return "turn-1";
+    },
+    appendMessage: async (turnId, value) => {
+      events.push(["message", turnId, value]);
+    },
+    completeTurn: async (turnId) => {
+      events.push(["complete", turnId]);
+    },
+    failTurn: async (turnId, error) => {
+      events.push(["fail", turnId, error]);
+    },
+  };
+  const { client } = fakeClient(message("done"));
+  const agent = new ReActAgent(
+    client,
+    "model-x",
+    "prompt",
+    new ToolRegistry([], {}),
+    3,
+    [],
+    recorder,
+  );
+
+  assert.equal(await agent.runTurn("hello", () => undefined), "done");
+  assert.deepEqual(events, [
+    ["start", "hello"],
+    ["message", "turn-1", { role: "user", content: "hello" }],
+    ["message", "turn-1", { role: "assistant", content: "done" }],
+    ["complete", "turn-1"],
+  ]);
+});
+
+test("ReActAgent 在模型失败时将 Turn 标记为 failed", async () => {
+  const modelError = new Error("model unavailable");
+  const events: unknown[] = [];
+  const recorder: SessionRecorder = {
+    startTurn: async () => {
+      events.push(["start", "turn-1"]);
+      return "turn-1";
+    },
+    appendMessage: async (turnId, value) => {
+      events.push(["message", turnId, value]);
+    },
+    completeTurn: async (turnId) => {
+      events.push(["complete", turnId]);
+    },
+    failTurn: async (turnId, error) => {
+      events.push(["fail", turnId, error]);
+    },
+  };
+  const client = {
+    chat: {
+      completions: {
+        create: async () => {
+          throw modelError;
+        },
+      },
+    },
+  };
+  const agent = new ReActAgent(
+    client,
+    "model-x",
+    "prompt",
+    new ToolRegistry([], {}),
+    3,
+    [],
+    recorder,
+  );
+
+  await assert.rejects(
+    () => agent.runTurn("hello", () => undefined),
+    (error: unknown) => error === modelError,
+  );
+  assert.deepEqual(events, [
+    ["start", "turn-1"],
+    ["message", "turn-1", { role: "user", content: "hello" }],
+    ["fail", "turn-1", modelError],
+  ]);
+});
+
+test("ReActAgent 将恢复的历史消息放在当前 system message 之后", () => {
+  const history = [
+    { role: "user", content: "previous question" },
+    { role: "assistant", content: "previous answer" },
+  ];
+  const { client } = fakeClient();
+  const agent = new ReActAgent(
+    client,
+    "model-x",
+    "current prompt",
+    new ToolRegistry([], {}),
+    3,
+    history,
+  );
+
+  history.push({ role: "user", content: "later mutation" });
+
+  assert.deepEqual(agent.messages, [
+    { role: "system", content: "current prompt" },
+    { role: "user", content: "previous question" },
+    { role: "assistant", content: "previous answer" },
+  ]);
+});
+
 test("ReActAgent 执行工具并记录 Observation", async () => {
   const { client } = fakeClient(message(null, [toolCall()]), message("finished"));
   const output: string[] = [];
@@ -97,6 +207,47 @@ test("ReActAgent 执行工具并记录 Observation", async () => {
   });
   assert.ok(output.some((line) => line.includes("Action:")));
   assert.ok(output.some((line) => line.includes("Observation:")));
+});
+
+test("ReActAgent 将工具执行结果记录为 tool message", async () => {
+  const persistedMessages: AgentMessage[] = [];
+  const recorder: SessionRecorder = {
+    startTurn: async () => "turn-1",
+    appendMessage: async (_turnId, value) => {
+      persistedMessages.push(value);
+    },
+    completeTurn: async () => undefined,
+    failTurn: async () => undefined,
+  };
+  const { client } = fakeClient(
+    message(null, [toolCall()]),
+    message("finished"),
+  );
+  const agent = new ReActAgent(
+    client,
+    "model-x",
+    "prompt",
+    new ToolRegistry(echoSpecs, {
+      echo: ({ text }) => ({ ok: true, data: { text }, error: null }),
+    }),
+    3,
+    [],
+    recorder,
+  );
+
+  await agent.runTurn("run tool", () => undefined);
+
+  assert.deepEqual(persistedMessages.map(({ role }) => role), [
+    "user",
+    "assistant",
+    "tool",
+    "assistant",
+  ]);
+  assert.deepEqual(persistedMessages[2], {
+    role: "tool",
+    tool_call_id: "call-1",
+    content: '{"ok":true,"data":{"text":"hello"},"error":null}',
+  });
 });
 
 test("ReActAgent 将工具错误转为 Observation", async () => {
