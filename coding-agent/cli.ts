@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { stdin, stdout } from "node:process";
 import { createInterface } from "node:readline/promises";
 
@@ -6,6 +7,12 @@ import OpenAI from "openai";
 import { loadRuntime } from "./config.ts";
 import { ReActAgent } from "./runtime.ts";
 import type { ChatClient, TokenUsage } from "./runtime.ts";
+import { SessionStore } from "./session/store.ts";
+import {
+  initializeStateDatabase,
+  STATE_PRIVACY_NOTICE,
+  stateDatabasePath,
+} from "./sqlite.ts";
 import { configureWorkspace } from "./tools/index.ts";
 import { assertMacOsSandboxAvailable } from "./tools/macos_sandbox.ts";
 import { loadTools } from "./tools/registry.ts";
@@ -14,6 +21,110 @@ import type { ApprovalPrompt, ApprovalRequest } from "./tools/permissions.ts";
 type Questioner = {
   question(prompt: string): Promise<string>;
 };
+
+export function createCliTerminal(
+  history: string[],
+  input: NodeJS.ReadableStream = stdin,
+  output: NodeJS.WritableStream = stdout,
+) {
+  const terminal = createInterface({
+    input,
+    output,
+    history,
+    historySize: 100,
+    removeHistoryDuplicates: true,
+  });
+  let recordedHistory = [...history];
+  let shouldRecordAnswer = true;
+
+  terminal.on("history", (currentHistory) => {
+    if (shouldRecordAnswer) {
+      recordedHistory = [...currentHistory];
+      return;
+    }
+    currentHistory.splice(0, currentHistory.length, ...recordedHistory);
+  });
+
+  return {
+    question(prompt: string): Promise<string> {
+      return terminal.question(prompt);
+    },
+    async questionWithoutHistory(prompt: string): Promise<string> {
+      shouldRecordAnswer = false;
+      try {
+        return await terminal.question(prompt);
+      } finally {
+        shouldRecordAnswer = true;
+      }
+    },
+    close(): void {
+      terminal.close();
+    },
+  };
+}
+
+export function createApprovalQuestioner(
+  terminal: ReturnType<typeof createCliTerminal>,
+): Questioner {
+  return {
+    question(prompt: string): Promise<string> {
+      return terminal.questionWithoutHistory(prompt);
+    },
+  };
+}
+
+export type CliArguments = {
+  workspace: string;
+  resumeSessionId?: string;
+  continueLatest: boolean;
+};
+
+export function parseCliArguments(values: string[]): CliArguments {
+  let index = 0;
+  let workspace = ".";
+  let resumeSessionId: string | undefined;
+  let continueLatest = false;
+
+  if (values[0] !== undefined && !values[0].startsWith("--")) {
+    workspace = values[0];
+    index = 1;
+  }
+
+  while (index < values.length) {
+    const value = values[index];
+    if (value === "--resume") {
+      const candidate = values[index + 1];
+      if (candidate === undefined || candidate === "" || candidate.startsWith("--")) {
+        throw new Error("--resume 需要 Session ID");
+      }
+      if (resumeSessionId !== undefined) {
+        throw new Error("--resume 不能重复使用");
+      }
+      resumeSessionId = candidate;
+      index += 2;
+      continue;
+    }
+    if (value === "--continue") {
+      if (continueLatest) {
+        throw new Error("--continue 不能重复使用");
+      }
+      continueLatest = true;
+      index += 1;
+      continue;
+    }
+    throw new Error(`未知参数: ${value}`);
+  }
+
+  if (resumeSessionId !== undefined && continueLatest) {
+    throw new Error("--resume 与 --continue 不能同时使用");
+  }
+
+  return {
+    workspace,
+    ...(resumeSessionId === undefined ? {} : { resumeSessionId }),
+    continueLatest,
+  };
+}
 
 // 工作区必须先解析成功；随后沙箱预检失败时直接终止 CLI，禁止降级执行裸命令。
 export function prepareCliWorkspace(
@@ -57,30 +168,78 @@ export function createApprovalPrompt(
 // CLI 主函数：组装运行环境、创建 Agent、进入 REPL 循环
 export async function runCli(): Promise<void> {
   // 1. 解析工作目录并确认 macOS 沙箱可用（默认当前目录）
-  const workspace = prepareCliWorkspace(process.argv[2] ?? ".");
+  const cliArguments = parseCliArguments(process.argv.slice(2));
+  const workspace = prepareCliWorkspace(cliArguments.workspace);
   // 2. 加载运行时配置（provider / prompt / maxSteps）
   const runtime = await loadRuntime();
-  // 3. 创建 readline，既处理主对话，也处理工具审批
-  const terminal = createInterface({ input: stdin, output: stdout });
+  // 3. 初始化状态数据库；失败时直接终止启动，不降级为无持久化模式
+  const stateDatabase = await initializeStateDatabase();
+  console.log(`状态数据库: ${stateDatabasePath()}`);
+  console.log(STATE_PRIVACY_NOTICE);
+  let terminal: ReturnType<typeof createCliTerminal> | undefined;
   try {
-    // 4. 加载工具，并将终端审批回调注入统一权限系统
-    const tools = await loadTools(undefined, createApprovalPrompt(terminal));
-    // 5. 创建 OpenAI 兼容客户端（支持任意兼容 API 的服务）
+    // 4. 先解析 Session，恢复时才能把当前 Session 的提问交给 readline
+    const sessionStore = new SessionStore(stateDatabase);
+    const systemPromptHash = createHash("sha256")
+      .update(runtime.prompt)
+      .digest("hex");
+    let resumeSessionId = cliArguments.resumeSessionId;
+    if (cliArguments.continueLatest) {
+      const latestSession = sessionStore.findLatestSession(workspace);
+      if (latestSession === undefined) {
+        throw new Error("当前工作区没有历史 Session");
+      }
+      resumeSessionId = latestSession.id;
+    }
+    const snapshot = resumeSessionId === undefined
+      ? undefined
+      : sessionStore.loadSnapshot(resumeSessionId, workspace);
+    // 5. 同一个 readline 同时处理主对话和工具审批
+    terminal = createCliTerminal(snapshot?.questions ?? []);
+    // 6. 加载工具，并将终端审批回调注入统一权限系统
+    const tools = await loadTools(
+      undefined,
+      createApprovalPrompt(createApprovalQuestioner(terminal)),
+    );
+    // 7. 创建 OpenAI 兼容客户端（支持任意兼容 API 的服务）
     const client = new OpenAI({
       apiKey: runtime.provider.AGENT_API_KEY,
       baseURL: runtime.provider.base_url,
     }) as unknown as ChatClient;
-    // 6. 创建 ReAct Agent
+    if (
+      snapshot !== undefined &&
+      snapshot.session.systemPromptHash !== systemPromptHash
+    ) {
+      console.log("警告：系统提示已变化，将使用当前系统提示继续会话。");
+    }
+    if (snapshot !== undefined && snapshot.interruptedTurns > 0) {
+      console.log("检测到上一轮未完成，已恢复到最后一个完整 Turn。");
+    }
+    if (snapshot !== undefined) {
+      sessionStore.markSessionActive(
+        snapshot.session.id,
+        runtime.provider.model,
+      );
+    }
+    const session = snapshot?.session ?? sessionStore.createSession(
+      workspace,
+      runtime.provider.model,
+      systemPromptHash,
+    );
+    // 8. 创建 Agent，并把 Session 持久化记录器注入
     const agent = new ReActAgent(
       client,
       runtime.provider.model,
       runtime.prompt,
       tools,
       runtime.maxSteps,
+      snapshot?.messages ?? [],
+      sessionStore.recorder(session.id),
     );
+    console.log(`Session: ${session.id}`);
     console.log(`ReAct Agent 已启动，工作目录: ${workspace}`);
     console.log("输入 exit 或 quit 退出。");
-    // 7. REPL 主循环
+    // 9. REPL 主循环
     while (true) {
       const userInput = (await terminal.question("You: ")).trim();
       if (["exit", "quit"].includes(userInput.toLocaleLowerCase())) break;
@@ -96,6 +255,7 @@ export async function runCli(): Promise<void> {
     }
     console.log(formatTokenUsage(agent.tokenUsage));
   } finally {
-    terminal.close();
+    terminal?.close();
+    stateDatabase.close();
   }
 }

@@ -15,6 +15,13 @@ export type AgentMessage = {
   tool_call_id?: string;
 };
 
+export type SessionRecorder = {
+  startTurn(userInput: string): Promise<string>;
+  appendMessage(turnId: string, message: AgentMessage): Promise<void>;
+  completeTurn(turnId: string): Promise<void>;
+  failTurn(turnId: string, error: unknown): Promise<void>;
+};
+
 // 模型原始返回的 assistant 消息
 type AssistantMessage = { content: string | null; tool_calls?: ToolCall[] };
 
@@ -115,12 +122,23 @@ function tokenCount(value: unknown): number {
     : 0;
 }
 
+function accumulateTokenUsage(total: TokenUsage, usage?: ModelUsage): void {
+  const inputTokens = tokenCount(usage?.prompt_tokens);
+  const outputTokens = tokenCount(usage?.completion_tokens);
+  const reportedTotal = tokenCount(usage?.total_tokens);
+
+  total.inputTokens += inputTokens;
+  total.outputTokens += outputTokens;
+  total.totalTokens += reportedTotal || inputTokens + outputTokens;
+}
+
 export class ReActAgent {
   readonly messages: AgentMessage[];
   private readonly client: ChatClient;
   private readonly model: string;
   private readonly tools: ToolRegistry;
   private readonly maxSteps: number;
+  private readonly recorder?: SessionRecorder;
   private readonly usage: TokenUsage = {
     inputTokens: 0,
     outputTokens: 0,
@@ -133,12 +151,18 @@ export class ReActAgent {
     systemPrompt: string,
     tools: ToolRegistry,
     maxSteps: number,
+    initialMessages: AgentMessage[] = [],
+    recorder?: SessionRecorder,
   ) {
     this.client = client;
     this.model = model;
     this.tools = tools;
     this.maxSteps = maxSteps;
-    this.messages = [{ role: "system", content: systemPrompt }];
+    this.recorder = recorder;
+    this.messages = [
+      { role: "system", content: systemPrompt },
+      ...initialMessages,
+    ];
   }
 
   // 返回副本，避免 CLI 或其他调用方改写会话累计值。
@@ -151,64 +175,83 @@ export class ReActAgent {
     userInput: string,
     output: (line: string) => void = console.log,
   ): Promise<string> {
-    this.messages.push({ role: "user", content: userInput });
-    // ReAct 循环：最多 maxSteps 步，每步可调用一次模型
-    for (let step = 0; step < this.maxSteps; step += 1) {
-      const stepLabel = `[Step ${step + 1}/${this.maxSteps}]`;
-      output(`${stepLabel} → 请求模型`);
-      const request: Record<string, unknown> = {
-        model: this.model,
-        messages: this.messages,
-      };
-      // 有工具时带上 tools 和 tool_choice
-      if (this.tools.specs.length > 0)
-        Object.assign(request, {
-          tools: this.tools.specs,
-          tool_choice: "auto",
-        });
-      const response = await this.client.chat.completions.create(
-        sanitizeUnicode(request) as Record<string, unknown>,
-      );
-      const inputTokens = tokenCount(response.usage?.prompt_tokens);
-      const outputTokens = tokenCount(response.usage?.completion_tokens);
-      this.usage.inputTokens += inputTokens;
-      this.usage.outputTokens += outputTokens;
-      this.usage.totalTokens += tokenCount(response.usage?.total_tokens) || inputTokens + outputTokens;
-      const choice = response.choices[0];
-      const message = choice?.message;
-      if (!message) throw new Error("模型响应为空");
-      this.messages.push(assistantMessage(message));
-      const finishReason = finishReasonSuffix(choice.finish_reason);
-      // 没有工具调用 → 返回最终文本
-      if (!message.tool_calls?.length) {
-        output(
-          `${stepLabel} ← ${message.content ? "最终回答" : "空响应"}${finishReason}`,
-        );
-        return message.content ?? "";
+    const turnId = await this.recorder?.startTurn(userInput);
+    try {
+      const userMessage: AgentMessage = { role: "user", content: userInput };
+      if (turnId !== undefined) {
+        await this.recorder?.appendMessage(turnId, userMessage);
       }
-      output(
-        `${stepLabel} ← 工具调用，共 ${message.tool_calls.length} 个${finishReason}`,
-      );
+      this.messages.push(userMessage);
+      // ReAct 循环：最多 maxSteps 步，每步可调用一次模型
+      for (let step = 0; step < this.maxSteps; step += 1) {
+        const stepLabel = `[Step ${step + 1}/${this.maxSteps}]`;
+        output(`${stepLabel} → 请求模型`);
+        const request: Record<string, unknown> = {
+          model: this.model,
+          messages: this.messages,
+        };
+        // 有工具时带上 tools 和 tool_choice
+        if (this.tools.specs.length > 0)
+          Object.assign(request, {
+            tools: this.tools.specs,
+            tool_choice: "auto",
+          });
+        const response = await this.client.chat.completions.create(
+          sanitizeUnicode(request) as Record<string, unknown>,
+        );
+        accumulateTokenUsage(this.usage, response.usage);
+        const choice = response.choices[0];
+        const message = choice?.message;
+        if (!message) throw new Error("模型响应为空");
+        const savedAssistantMessage = assistantMessage(message);
+        if (turnId !== undefined) {
+          await this.recorder?.appendMessage(turnId, savedAssistantMessage);
+        }
+        this.messages.push(savedAssistantMessage);
+        const finishReason = finishReasonSuffix(choice.finish_reason);
+        // 没有工具调用 → 返回最终文本
+        if (!message.tool_calls?.length) {
+          if (turnId !== undefined) {
+            await this.recorder?.completeTurn(turnId);
+          }
+          output(
+            `${stepLabel} ← ${message.content ? "最终回答" : "空响应"}${finishReason}`,
+          );
+          return message.content ?? "";
+        }
+        output(
+          `${stepLabel} ← 工具调用，共 ${message.tool_calls.length} 个${finishReason}`,
+        );
 
-      // 逐个执行工具调用，结果反馈给模型进入下一轮
-      for (const [callIndex, call] of message.tool_calls.entries()) {
-        const toolLabel = `  [Tool ${callIndex + 1}/${message.tool_calls.length}]`;
-        const name = call.function.name;
-        const rawArguments = call.function.arguments;
-        output(
-          `${toolLabel} Action: ${name}(${summarizeLogJson(rawArguments)})`,
-        );
-        // 工具注册表负责 schema 校验 + 执行 handler
-        const observation = await this.tools.execute(name, rawArguments);
-        output(`${toolLabel} Observation: ${summarizeLogJson(observation)}`);
-        this.messages.push({
-          role: "tool",
-          tool_call_id: call.id,
-          content: observation,
-        });
+        // 逐个执行工具调用，结果反馈给模型进入下一轮
+        for (const [callIndex, call] of message.tool_calls.entries()) {
+          const toolLabel = `  [Tool ${callIndex + 1}/${message.tool_calls.length}]`;
+          const name = call.function.name;
+          const rawArguments = call.function.arguments;
+          output(
+            `${toolLabel} Action: ${name}(${summarizeLogJson(rawArguments)})`,
+          );
+          // 工具注册表负责 schema 校验 + 执行 handler
+          const observation = await this.tools.execute(name, rawArguments);
+          output(`${toolLabel} Observation: ${summarizeLogJson(observation)}`);
+          const toolMessage: AgentMessage = {
+            role: "tool",
+            tool_call_id: call.id,
+            content: observation,
+          };
+          if (turnId !== undefined) {
+            await this.recorder?.appendMessage(turnId, toolMessage);
+          }
+          this.messages.push(toolMessage);
+        }
       }
+      // 超出步数上限，抛出错误
+      throw new Error(`已达到最大步骤数 ${this.maxSteps}`);
+    } catch (error) {
+      if (turnId !== undefined) {
+        await this.recorder?.failTurn(turnId, error);
+      }
+      throw error;
     }
-    // 超出步数上限，抛出错误
-    throw new Error(`已达到最大步骤数 ${this.maxSteps}`);
   }
 }
