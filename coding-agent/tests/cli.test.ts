@@ -18,6 +18,7 @@ import {
 } from "../cli.ts";
 
 const run = promisify(execFile);
+const macOsOnly = { skip: process.platform !== "darwin" };
 
 function runCliWithInput(
   entry: string,
@@ -152,7 +153,7 @@ test("CLI 在工作目录无效时以配置错误退出", async () => {
   );
 });
 
-test("CLI 启动时创建并显示新的 Session", async () => {
+test("CLI 启动时创建并显示新的 Session", macOsOnly, async () => {
   const workspace = await mkdtemp(
     path.join(tmpdir(), "coding-agent-workspace-test-"),
   );
@@ -185,7 +186,7 @@ test("CLI 启动时创建并显示新的 Session", async () => {
   }
 });
 
-test("CLI 按 ID 恢复原 Session 而不创建新 Session", async () => {
+test("CLI 按 ID 恢复原 Session 而不创建新 Session", macOsOnly, async () => {
   const workspace = await mkdtemp(
     path.join(tmpdir(), "coding-agent-resume-workspace-test-"),
   );
@@ -225,7 +226,7 @@ test("CLI 按 ID 恢复原 Session 而不创建新 Session", async () => {
   }
 });
 
-test("CLI 继续当前工作区最近的 Session", async () => {
+test("CLI 继续当前工作区最近的 Session", macOsOnly, async () => {
   const workspace = await mkdtemp(
     path.join(tmpdir(), "coding-agent-continue-workspace-test-"),
   );
@@ -268,7 +269,7 @@ test("CLI 继续当前工作区最近的 Session", async () => {
   }
 });
 
-test("CLI 恢复时提示系统规则变化和未完成 Turn", async () => {
+test("CLI 恢复时提示系统规则变化和未完成 Turn", macOsOnly, async () => {
   const workspace = await mkdtemp(
     path.join(tmpdir(), "coding-agent-warning-workspace-test-"),
   );
@@ -323,7 +324,7 @@ test("CLI 恢复时提示系统规则变化和未完成 Turn", async () => {
   }
 });
 
-test("CLI 恢复时更新 Session 的当前模型和活跃时间", async () => {
+test("CLI 恢复时更新 Session 的当前模型和活跃时间", macOsOnly, async () => {
   const workspace = await mkdtemp(
     path.join(tmpdir(), "coding-agent-model-workspace-test-"),
   );

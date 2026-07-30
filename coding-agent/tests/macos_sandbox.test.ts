@@ -10,13 +10,15 @@ import {
   sanitizeChildEnvironment,
 } from "../tools/macos_sandbox.ts";
 
-test("macOS 沙箱依赖存在", () => {
+const macOsOnly = { skip: process.platform !== "darwin" };
+
+test("macOS 沙箱依赖存在", macOsOnly, () => {
   assert.doesNotThrow(() => assertMacOsSandboxAvailable());
   assert.equal(MACOS_SANDBOX_EXECUTABLE, "/usr/bin/sandbox-exec");
   assert.equal(path.basename(MACOS_SANDBOX_PROFILE), "macos-workspace.sb");
 });
 
-test("sandbox-exec 或 Profile 缺失时 fail closed", () => {
+test("sandbox-exec 或 Profile 缺失时 fail closed", macOsOnly, () => {
   assert.throws(
     () =>
       assertMacOsSandboxAvailable(
@@ -35,7 +37,7 @@ test("sandbox-exec 或 Profile 缺失时 fail closed", () => {
   );
 });
 
-test("沙箱命令保持原始 argv，不引入外层 Shell", () => {
+test("沙箱命令保持原始 argv，不引入外层 Shell", macOsOnly, () => {
   const cwd = path.resolve(import.meta.dirname, "..");
   const original = ["/bin/echo", "a b", ";", "$(touch bad)", "line1\nline2"];
   const command = buildSandboxedCommand(original, cwd, {
