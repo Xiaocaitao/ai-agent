@@ -1,4 +1,5 @@
 export { configureWorkspace } from "./_common.ts";
+export { editFileTool, edit_file } from "./edit_file.ts";
 export { readFileTool, read_file } from "./read_file.ts";
 export { runCommand, run_command } from "./run_command.ts";
 export { searchFiles, search_files } from "./search_files.ts";

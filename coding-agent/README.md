@@ -10,6 +10,12 @@
 
 ## 功能更新日志
 
+### 2026-08-01
+
+- 增加 `edit_file`：通过唯一的 `old_text` 精确替换现有文件内容；零匹配或多匹配时拒绝修改。
+- 修改采用临时文件原子替换并保留原文件权限；不存在的文件和符号链接会被拒绝。
+- `edit_file` 默认需要审批，本会话授权仅对同一文件路径生效。
+
 ### 2026-07-12
 
 - `run_command` 接入 macOS Seatbelt：所有获批命令统一通过 `/usr/bin/sandbox-exec` 启动，限制自动继承到 Shell、Python、Node 等后代进程。
@@ -46,6 +52,7 @@
 | --- | --- |
 | `read_file` | 读取工作区内 UTF-8 文本文件的指定行。 |
 | `search_files` | 在工作区内递归搜索文本。 |
+| `edit_file` | 将现有 UTF-8 文本文件中唯一的 `old_text` 替换为 `new_text`。 |
 | `write_file` | 创建或完整覆盖工作区内的 UTF-8 文本文件。 |
 | `run_command` | 执行一次非 Shell 命令并返回输出和退出码。 |
 
@@ -57,7 +64,7 @@
 - `ask`：执行前询问，可选择仅本次允许、本会话允许或拒绝。
 - `deny`：始终拒绝执行。
 
-当前默认允许读取和搜索，写文件与运行命令需要审批。会话授权按文件路径或可执行程序保存，进程退出后失效；删除命令、`git clean` 和 `git reset --hard` 始终拒绝，不能被会话授权覆盖。
+当前默认允许读取和搜索，`edit_file`、`write_file` 与运行命令需要审批。文件工具的会话授权按工具和文件路径保存，进程退出后失效；删除命令、`git clean` 和 `git reset --hard` 始终拒绝，不能被会话授权覆盖。
 
 审批与 OS 沙箱是两层机制：审批决定用户是否同意尝试执行，Seatbelt 决定获批进程技术上最多能访问什么。系统 `deny` 不会被用户审批覆盖，用户批准也不会扩大 Seatbelt 的文件和网络边界。
 
@@ -78,7 +85,7 @@ npm run typecheck
 npm run test:sandbox
 ```
 
-Seatbelt 只保护 `run_command` 启动的子进程。内置 `read_file`、`search_files` 和 `write_file` 仍使用应用层工作区路径校验，不会自动进入 OS 沙箱。
+Seatbelt 只保护 `run_command` 启动的子进程。内置 `read_file`、`search_files`、`edit_file` 和 `write_file` 仍使用应用层工作区路径校验，不会自动进入 OS 沙箱。
 
 ## Token 用量
 

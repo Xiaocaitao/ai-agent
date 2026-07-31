@@ -20,7 +20,7 @@ test("loadTools 加载项目工具并支持空注册表", async () => {
   const registry = await loadTools();
   assert.deepEqual(
     registry.specs.map((spec) => spec.function.name).sort(),
-    ["read_file", "run_command", "search_files", "write_file"],
+    ["edit_file", "read_file", "run_command", "search_files", "write_file"],
   );
 });
 

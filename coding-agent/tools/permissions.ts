@@ -176,7 +176,7 @@ function resourceKey(
   toolName: string,
   value: Record<string, unknown>,
 ): string | undefined {
-  if (toolName === "write_file")
+  if (toolName === "write_file" || toolName === "edit_file")
     return `${toolName}:${path.normalize(String(value.path ?? ""))}`;
   if (toolName === "run_command")
     return commandPolicy(commandArguments(value)).sessionKey;
@@ -193,6 +193,11 @@ function approvalSummary(
   if (toolName === "write_file") {
     const content = typeof value.content === "string" ? value.content : "";
     return `写入 ${String(value.path ?? "")}（${Buffer.byteLength(content, "utf8")} 字节）`;
+  }
+  if (toolName === "edit_file") {
+    const oldText = typeof value.old_text === "string" ? value.old_text : "";
+    const newText = typeof value.new_text === "string" ? value.new_text : "";
+    return `编辑 ${String(value.path ?? "")}（旧文本 ${Buffer.byteLength(oldText, "utf8")} 字节 → 新文本 ${Buffer.byteLength(newText, "utf8")} 字节）`;
   }
   if (toolName === "run_command")
     return `执行 ${commandArguments(value).join(" ")}`;

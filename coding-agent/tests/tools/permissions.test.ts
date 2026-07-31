@@ -35,6 +35,53 @@ test("ask 支持仅本次、本会话和拒绝", async () => {
   assert.equal(approvalIndex, 3);
 });
 
+test("edit_file 的 session 授权只对同一文件生效", async () => {
+  let approvals = 0;
+  const engine = new PermissionEngine(
+    { edit_file: "ask" },
+    async () => {
+      approvals += 1;
+      return approvals === 1 ? "session" : "reject";
+    },
+  );
+
+  assert.equal((await engine.authorize("edit_file", {
+    path: "src/../src/a.ts",
+    old_text: "false",
+    new_text: "true",
+  })).allowed, true);
+  assert.equal((await engine.authorize("edit_file", {
+    path: "src/a.ts",
+    old_text: "false",
+    new_text: "true",
+  })).allowed, true);
+  assert.equal((await engine.authorize("edit_file", {
+    path: "src/b.ts",
+    old_text: "false",
+    new_text: "true",
+  })).allowed, false);
+  assert.equal(approvals, 2);
+});
+
+test("edit_file 的审批摘要包含路径和替换文本大小", async () => {
+  let summary = "";
+  const engine = new PermissionEngine(
+    { edit_file: "ask" },
+    async (request) => {
+      summary = request.summary;
+      return "once";
+    },
+  );
+
+  await engine.authorize("edit_file", {
+    path: "src/a.ts",
+    old_text: "关闭",
+    new_text: "开启",
+  });
+
+  assert.equal(summary, "编辑 src/a.ts（旧文本 6 字节 → 新文本 6 字节）");
+});
+
 test("危险命令强制 deny 且不能被会话授权绕过", async () => {
   let approvals = 0;
   const engine = new PermissionEngine(

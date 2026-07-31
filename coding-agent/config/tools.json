@@ -1,5 +1,6 @@
 {
   "permissions": {
+    "edit_file": "ask",
     "run_command": "ask",
     "read_file": "allow",
     "write_file": "ask",
@@ -56,6 +57,22 @@
           "content": {"type": "string", "description": "完整文件内容"}
         },
         "required": ["path", "content"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "edit_file",
+      "module": "tools.edit_file",
+      "function": "edit_file",
+      "description": "精确替换工作区内现有 UTF-8 文本文件中的唯一文本。old_text 必须只出现一次；创建文件请使用 write_file。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {"type": "string", "minLength": 1, "description": "工作区相对路径"},
+          "old_text": {"type": "string", "minLength": 1, "description": "文件中必须唯一存在的原文本"},
+          "new_text": {"type": "string", "description": "替换后的新文本，可以为空字符串"}
+        },
+        "required": ["path", "old_text", "new_text"],
         "additionalProperties": false
       }
     },
