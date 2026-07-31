@@ -1,7 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
-import type { AgentMessage, SessionRecorder } from "../runtime.ts";
+import { compactionMessage } from "../runtime.ts";
+import type {
+  AgentMessage,
+  CompactionInput,
+  SessionRecorder,
+} from "../runtime.ts";
 
 export type SessionRecord = {
   id: string;
@@ -50,6 +55,21 @@ function sessionRecord(value: unknown): SessionRecord {
     lastModel: row.last_model,
     systemPromptHash: row.system_prompt_hash,
   };
+}
+
+function agentMessage(value: unknown): AgentMessage {
+  const message = record(value);
+  if (
+    typeof message.id !== "number" ||
+    typeof message.payload_json !== "string"
+  ) {
+    throw new Error("Message 数据损坏");
+  }
+  try {
+    return JSON.parse(message.payload_json) as AgentMessage;
+  } catch {
+    throw new Error(`Message ${message.id} 数据损坏`);
+  }
 }
 
 export class SessionStore {
@@ -120,6 +140,84 @@ export class SessionStore {
     }
   }
 
+  saveCompaction(
+    sessionId: string,
+    summary: string,
+    throughTurnSequence: number,
+  ): void {
+    this.database.prepare(`
+      INSERT INTO compactions
+        (session_id, summary, through_turn_sequence, updated_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(session_id) DO UPDATE SET
+        summary = excluded.summary,
+        through_turn_sequence = excluded.through_turn_sequence,
+        updated_at = excluded.updated_at
+    `).run(sessionId, summary, throughTurnSequence, this.now());
+  }
+
+  prepareCompaction(sessionId: string): CompactionInput | undefined {
+    // 上一次的摘要
+    const compaction = record(this.database.prepare(`
+      SELECT summary, through_turn_sequence
+      FROM compactions
+      WHERE session_id = ?
+    `).get(sessionId));
+    const hasCompaction = Object.keys(compaction).length > 0;
+    if (
+      hasCompaction &&
+      (typeof compaction.summary !== "string" ||
+        typeof compaction.through_turn_sequence !== "number")
+    ) {
+      throw new Error("Compaction 数据损坏");
+    }
+    const previousBoundary = hasCompaction
+      ? Number(compaction.through_turn_sequence)
+      : 0;
+
+    // 倒数第三条
+    const boundary = record(this.database.prepare(`
+      SELECT sequence
+      FROM turns
+      WHERE session_id = ?
+        AND status = 'completed'
+        AND sequence > ?
+      ORDER BY sequence DESC
+      LIMIT 1 OFFSET 2
+    `).get(sessionId, previousBoundary));
+    if (typeof boundary.sequence !== "number") return undefined;
+
+    // 收集待压缩完整message
+    const messages = this.database.prepare(`
+      SELECT messages.id, messages.payload_json
+      FROM messages
+      JOIN turns ON turns.id = messages.turn_id
+      WHERE messages.session_id = ?
+        AND turns.status = 'completed'
+        AND turns.sequence > ?
+        AND turns.sequence <= ?
+      ORDER BY messages.sequence
+    `).all(sessionId, previousBoundary, boundary.sequence).map(agentMessage);
+
+    // 当前会话最近的两次message
+    const recentMessages = this.database.prepare(`
+      SELECT messages.id, messages.payload_json
+      FROM messages
+      JOIN turns ON turns.id = messages.turn_id
+      WHERE messages.session_id = ?
+        AND turns.status = 'completed'
+        AND turns.sequence > ?
+      ORDER BY messages.sequence
+    `).all(sessionId, boundary.sequence).map(agentMessage);
+
+    return {
+      previousSummary: hasCompaction ? String(compaction.summary) : undefined,
+      throughTurnSequence: boundary.sequence,
+      messages,
+      recentMessages,
+    };
+  }
+
   loadSnapshot(sessionId: string, workspacePath: string): SessionSnapshot {
     return this.transaction(() => {
       const row = this.database.prepare(`
@@ -148,26 +246,43 @@ export class SessionStore {
         WHERE session_id = ? AND status = 'running'
       `).run(this.now(), sessionId);
 
-      const messages = this.database.prepare(`
+      // 拉摘要
+      const compaction = record(this.database.prepare(`
+        SELECT summary, through_turn_sequence
+        FROM compactions
+        WHERE session_id = ?
+      `).get(sessionId));
+      const hasCompaction = Object.keys(compaction).length > 0;
+      if (
+        hasCompaction &&
+        (typeof compaction.summary !== "string" ||
+          typeof compaction.through_turn_sequence !== "number")
+      ) {
+        throw new Error("Compaction 数据损坏");
+      }
+      const throughTurnSequence = hasCompaction
+        ? Number(compaction.through_turn_sequence)
+        : 0;
+
+      // 拉未被压缩的完整消息
+      const storedMessages = this.database.prepare(`
         SELECT messages.id, messages.payload_json
         FROM messages
         JOIN turns ON turns.id = messages.turn_id
-        WHERE messages.session_id = ? AND turns.status = 'completed'
+        WHERE messages.session_id = ?
+          AND turns.status = 'completed'
+          AND turns.sequence > ?
         ORDER BY messages.sequence
-      `).all(sessionId).map((value) => {
-        const message = record(value);
-        if (
-          typeof message.id !== "number" ||
-          typeof message.payload_json !== "string"
-        ) {
-          throw new Error("Message 数据损坏");
-        }
-        try {
-          return JSON.parse(message.payload_json) as AgentMessage;
-        } catch {
-          throw new Error(`Message ${message.id} 数据损坏`);
-        }
+      `).all(sessionId, throughTurnSequence).map((value) => {
+        return agentMessage(value);
       });
+      const messages: AgentMessage[] = hasCompaction
+        ? [
+            // 摘要包装
+            compactionMessage(String(compaction.summary)),
+            ...storedMessages,
+          ]
+        : storedMessages;
 
       const questions = this.database.prepare(`
         SELECT user_input
@@ -193,6 +308,7 @@ export class SessionStore {
     });
   }
 
+  // 适配器对象，绑定当前会话和使用sqlite
   recorder(sessionId: string): SessionRecorder {
     return {
       startTurn: async (userInput) => this.startTurn(sessionId, userInput),
@@ -202,6 +318,9 @@ export class SessionStore {
         this.finishTurn(sessionId, turnId, "completed"),
       failTurn: async (turnId, error) =>
         this.finishTurn(sessionId, turnId, "failed", error),
+      prepareCompaction: async () => this.prepareCompaction(sessionId),
+      saveCompaction: async (summary, throughTurnSequence) =>
+        this.saveCompaction(sessionId, summary, throughTurnSequence),
     };
   }
 

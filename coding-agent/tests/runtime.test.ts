@@ -177,6 +177,333 @@ test("ReActAgent 将恢复的历史消息放在当前 system message 之后", ()
   ]);
 });
 
+test("ReActAgent 使用当前模型生成上下文摘要", async () => {
+  const calls: unknown[] = [];
+  const client = {
+    chat: {
+      completions: {
+        create: async (request: unknown) => {
+          calls.push(request);
+          return {
+            choices: [{ message: message("  新摘要  ") }],
+            usage: {
+              prompt_tokens: 100,
+              completion_tokens: 20,
+              total_tokens: 120,
+            },
+          };
+        },
+      },
+    },
+  };
+  const agent = new ReActAgent(
+    client,
+    "model-x",
+    "prompt",
+    new ToolRegistry([], {}),
+    3,
+  );
+
+  assert.equal(
+    await agent.createCompactionSummary("旧摘要", [
+      { role: "user", content: "previous question" },
+      { role: "assistant", content: "previous answer" },
+    ]),
+    "新摘要",
+  );
+  assert.deepEqual(agent.tokenUsage, {
+    inputTokens: 100,
+    outputTokens: 20,
+    totalTokens: 120,
+  });
+
+  const request = calls[0] as Record<string, unknown>;
+  assert.equal(request.model, "model-x");
+  assert.equal(request.max_tokens, 4_000);
+  const messages = request.messages as AgentMessage[];
+  assert.equal(messages[0]?.role, "system");
+  assert.match(String(messages[0]?.content), /用户目标/);
+  assert.deepEqual(messages.slice(1), [
+    { role: "system", content: "此前的会话摘要：\n旧摘要" },
+    { role: "user", content: "previous question" },
+    { role: "assistant", content: "previous answer" },
+    { role: "user", content: "请输出更新后的会话摘要。" },
+  ]);
+});
+
+test("ReActAgent 拒绝模型返回的空摘要", async () => {
+  const { client } = fakeClient(message("   "));
+  const agent = new ReActAgent(
+    client,
+    "model-x",
+    "prompt",
+    new ToolRegistry([], {}),
+    3,
+  );
+
+  await assert.rejects(
+    () => agent.createCompactionSummary(undefined, [
+      { role: "user", content: "previous question" },
+    ]),
+    /模型返回的摘要为空/,
+  );
+});
+
+test("ReActAgent 应用压缩结果后替换历史并清除待压缩标记", async () => {
+  const client = {
+    chat: {
+      completions: {
+        create: async () => ({
+          choices: [{ message: message("current answer") }],
+          usage: {
+            prompt_tokens: 800_000,
+            completion_tokens: 1,
+            total_tokens: 800_001,
+          },
+        }),
+      },
+    },
+  };
+  const agent = new ReActAgent(
+    client,
+    "model-x",
+    "current prompt",
+    new ToolRegistry([], {}),
+    1,
+    [
+      { role: "user", content: "old question" },
+      { role: "assistant", content: "old answer" },
+    ],
+    undefined,
+    1_000_000,
+  );
+  await agent.runTurn("current question", () => undefined);
+  assert.equal(agent.compactionPending, true);
+
+  agent.applyCompaction([
+    { role: "system", content: "会话历史摘要：\n新摘要" },
+    { role: "user", content: "current question" },
+    { role: "assistant", content: "current answer" },
+  ]);
+
+  assert.deepEqual(agent.messages, [
+    { role: "system", content: "current prompt" },
+    { role: "system", content: "会话历史摘要：\n新摘要" },
+    { role: "user", content: "current question" },
+    { role: "assistant", content: "current answer" },
+  ]);
+  assert.equal(agent.compactionPending, false);
+});
+
+test("ReActAgent 在下一 ReAct Step 前压缩旧 Turn 并保留当前 Turn", async () => {
+  const requests: Array<Record<string, unknown>> = [];
+  const responses = [
+    {
+      choices: [{ message: message(null, [toolCall()]) }],
+      usage: {
+        prompt_tokens: 800_000,
+        completion_tokens: 1,
+        total_tokens: 800_001,
+      },
+    },
+    { choices: [{ message: message("新摘要") }] },
+    { choices: [{ message: message("finished") }] },
+  ];
+  const client = {
+    chat: {
+      completions: {
+        create: async (request: Record<string, unknown>) => {
+          requests.push(request);
+          return responses.shift()!;
+        },
+      },
+    },
+  };
+  const recorder: SessionRecorder = {
+    startTurn: async () => "turn-current",
+    appendMessage: async () => undefined,
+    completeTurn: async () => undefined,
+    failTurn: async () => undefined,
+    prepareCompaction: async () => ({
+      previousSummary: undefined,
+      throughTurnSequence: 1,
+      messages: [
+        { role: "user", content: "old question-1" },
+        { role: "assistant", content: "old answer-1" },
+      ],
+      recentMessages: [
+        { role: "user", content: "old question-2" },
+        { role: "assistant", content: "old answer-2" },
+      ],
+    }),
+    saveCompaction: async () => undefined,
+  };
+  const agent = new ReActAgent(
+    client,
+    "model-x",
+    "prompt",
+    new ToolRegistry(echoSpecs, { echo: () => "tool result" }),
+    3,
+    [
+      { role: "user", content: "old question-1" },
+      { role: "assistant", content: "old answer-1" },
+      { role: "user", content: "old question-2" },
+      { role: "assistant", content: "old answer-2" },
+    ],
+    recorder,
+    1_000_000,
+  );
+
+  assert.equal(await agent.runTurn("current question", () => undefined), "finished");
+
+  const secondStepMessages = requests[2]?.messages as AgentMessage[];
+  assert.deepEqual(
+    secondStepMessages.map(({ role, content }) => ({ role, content })),
+    [
+      { role: "system", content: "prompt" },
+      { role: "system", content: "会话历史摘要：\n新摘要" },
+      { role: "user", content: "old question-2" },
+      { role: "assistant", content: "old answer-2" },
+      { role: "user", content: "current question" },
+      { role: "assistant", content: undefined },
+      { role: "tool", content: "tool result" },
+    ],
+  );
+  assert.equal(
+    secondStepMessages.some(({ content }) => content === "old question-1"),
+    false,
+  );
+});
+
+test("ReActAgent 在最终回答完成后由 Runtime 执行压缩", async () => {
+  const responses = [
+    {
+      choices: [{ message: message("current answer") }],
+      usage: {
+        prompt_tokens: 800_000,
+        completion_tokens: 1,
+        total_tokens: 800_001,
+      },
+    },
+    { choices: [{ message: message("新摘要") }] },
+  ];
+  let saved: unknown;
+  const recorder: SessionRecorder = {
+    startTurn: async () => "turn-current",
+    appendMessage: async () => undefined,
+    completeTurn: async () => undefined,
+    failTurn: async () => undefined,
+    prepareCompaction: async () => ({
+      previousSummary: "旧摘要",
+      throughTurnSequence: 3,
+      messages: [
+        { role: "user", content: "old question" },
+        { role: "assistant", content: "old answer" },
+      ],
+      recentMessages: [
+        { role: "user", content: "current question" },
+        { role: "assistant", content: "current answer" },
+      ],
+    }),
+    saveCompaction: async (summary, throughTurnSequence) => {
+      saved = { summary, throughTurnSequence };
+    },
+  };
+  const client = {
+    chat: {
+      completions: {
+        create: async () => responses.shift()!,
+      },
+    },
+  };
+  const agent = new ReActAgent(
+    client,
+    "model-x",
+    "prompt",
+    new ToolRegistry([], {}),
+    1,
+    [
+      { role: "user", content: "old question" },
+      { role: "assistant", content: "old answer" },
+    ],
+    recorder,
+    1_000_000,
+  );
+
+  assert.equal(await agent.runTurn("current question", () => undefined), "current answer");
+  assert.deepEqual(saved, { summary: "新摘要", throughTurnSequence: 3 });
+  assert.deepEqual(agent.messages, [
+    { role: "system", content: "prompt" },
+    { role: "system", content: "会话历史摘要：\n新摘要" },
+    { role: "user", content: "current question" },
+    { role: "assistant", content: "current answer" },
+  ]);
+  assert.equal(agent.compactionPending, false);
+});
+
+test("ReActAgent 压缩失败时保留原上下文并继续返回最终回答", async () => {
+  const responses = [
+    {
+      choices: [{ message: message("current answer") }],
+      usage: {
+        prompt_tokens: 800_000,
+        completion_tokens: 1,
+        total_tokens: 800_001,
+      },
+    },
+  ];
+  const client = {
+    chat: {
+      completions: {
+        create: async () => {
+          const response = responses.shift();
+          if (response === undefined) throw new Error("summary unavailable");
+          return response;
+        },
+      },
+    },
+  };
+  const recorder: SessionRecorder = {
+    startTurn: async () => "turn-current",
+    appendMessage: async () => undefined,
+    completeTurn: async () => undefined,
+    failTurn: async () => undefined,
+    prepareCompaction: async () => ({
+      previousSummary: undefined,
+      throughTurnSequence: 1,
+      messages: [{ role: "user", content: "old question" }],
+      recentMessages: [{ role: "user", content: "current question" }],
+    }),
+    saveCompaction: async () => {
+      throw new Error("不应保存失败摘要");
+    },
+  };
+  const output: string[] = [];
+  const agent = new ReActAgent(
+    client,
+    "model-x",
+    "prompt",
+    new ToolRegistry([], {}),
+    1,
+    [{ role: "user", content: "old question" }],
+    recorder,
+    1_000_000,
+  );
+
+  assert.equal(
+    await agent.runTurn("current question", output.push.bind(output)),
+    "current answer",
+  );
+  assert.equal(agent.compactionPending, true);
+  assert.ok(
+    output.includes("[Context] Compact 警告：summary unavailable"),
+  );
+  assert.equal(
+    agent.messages.some(({ content }) => content === "old question"),
+    true,
+  );
+});
+
 test("ReActAgent 执行工具并记录 Observation", async () => {
   const { client } = fakeClient(message(null, [toolCall()]), message("finished"));
   const output: string[] = [];
@@ -329,20 +656,76 @@ test("ReActAgent 累计本次会话的模型 Token 用量", async () => {
   });
 });
 
+test("ReActAgent 只在上下文达到 80% 时警告并标记待压缩", async () => {
+  for (const item of [
+    { promptTokens: 799_999, shouldWarn: false },
+    { promptTokens: 800_000, shouldWarn: true },
+  ]) {
+    const output: string[] = [];
+    const client = {
+      chat: {
+        completions: {
+          create: async () => ({
+            choices: [{ message: message("finished") }],
+            usage: {
+              prompt_tokens: item.promptTokens,
+              completion_tokens: 1,
+              total_tokens: item.promptTokens + 1,
+            },
+          }),
+        },
+      },
+    };
+    const agent = new ReActAgent(
+      client,
+      "model-x",
+      "prompt",
+      new ToolRegistry([], {}),
+      1,
+      [],
+      undefined,
+      1_000_000,
+    );
+
+    await agent.runTurn("run", output.push.bind(output));
+
+    assert.equal(
+      output.some((line) => line.startsWith("[Context]")),
+      item.shouldWarn,
+    );
+    assert.equal(agent.compactionPending, item.shouldWarn);
+    if (item.shouldWarn) {
+      assert.ok(
+        output.includes(
+          "[Context] 警告：上下文已使用 800000/1000000 Tokens（80.0%）",
+        ),
+      );
+    }
+  }
+});
+
 test("ReActAgent 在供应商未返回 usage 时按零累计", async () => {
   const { client } = fakeClient(message("finished"));
+  const output: string[] = [];
   const agent = new ReActAgent(
     client,
     "model-x",
     "prompt",
     new ToolRegistry([], {}),
     1,
+    [],
+    undefined,
+    1_000_000,
   );
 
-  await agent.runTurn("run", () => undefined);
+  await agent.runTurn("run", output.push.bind(output));
   assert.deepEqual(agent.tokenUsage, {
     inputTokens: 0,
     outputTokens: 0,
     totalTokens: 0,
   });
+  assert.equal(
+    output.some((line) => line.startsWith("[Context]")),
+    false,
+  );
 });

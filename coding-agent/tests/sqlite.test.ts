@@ -60,6 +60,7 @@ test("状态数据库初始化 Schema、PRAGMA 和文件权限", async () => {
       "sessions",
       "turns",
       "messages",
+      "compactions",
       "sessions_workspace_updated_idx",
       "turns_session_sequence_idx",
       "messages_session_sequence_idx",
@@ -72,6 +73,31 @@ test("状态数据库初始化 Schema、PRAGMA 和文件权限", async () => {
         (id, workspace_path, title, created_at, updated_at, last_model, system_prompt_hash)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run("session-1", "/workspace", null, 1, 1, "model-x", "hash");
+    database.prepare(`
+      INSERT INTO compactions
+        (session_id, summary, through_turn_sequence, updated_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(session_id) DO UPDATE SET
+        summary = excluded.summary,
+        through_turn_sequence = excluded.through_turn_sequence,
+        updated_at = excluded.updated_at
+    `).run("session-1", "旧摘要", 1, 1);
+    database.prepare(`
+      INSERT INTO compactions
+        (session_id, summary, through_turn_sequence, updated_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(session_id) DO UPDATE SET
+        summary = excluded.summary,
+        through_turn_sequence = excluded.through_turn_sequence,
+        updated_at = excluded.updated_at
+    `).run("session-1", "新摘要", 2, 2);
+    const compaction = record(database.prepare(`
+      SELECT summary, through_turn_sequence
+      FROM compactions
+      WHERE session_id = ?
+    `).get("session-1"));
+    assert.equal(compaction.summary, "新摘要");
+    assert.equal(compaction.through_turn_sequence, 2);
     database.prepare(`
       INSERT INTO turns
         (id, session_id, sequence, user_input, status, started_at)
@@ -86,6 +112,10 @@ test("状态数据库初始化 Schema、PRAGMA 和文件权限", async () => {
     database.prepare("DELETE FROM sessions WHERE id = ?").run("session-1");
     assert.equal(record(database.prepare("SELECT COUNT(*) AS count FROM turns").get()).count, 0);
     assert.equal(record(database.prepare("SELECT COUNT(*) AS count FROM messages").get()).count, 0);
+    assert.equal(
+      record(database.prepare("SELECT COUNT(*) AS count FROM compactions").get()).count,
+      0,
+    );
   } finally {
     database.close();
   }
