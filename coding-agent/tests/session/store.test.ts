@@ -211,6 +211,128 @@ test("恢复时中断未完成 Turn 且只加载完整消息", async () => {
   }
 });
 
+test("恢复时用最新摘要替换压缩边界内的消息", async () => {
+  const fixture = await sessionFixture();
+  try {
+    const ids = ["session-1", "turn-1", "turn-2", "turn-3"];
+    const store = new SessionStore(fixture.database, {
+      now: () => 100,
+      createId: () => ids.shift()!,
+    });
+    const session = store.createSession("/workspace", "model", "hash");
+    const recorder = store.recorder(session.id);
+
+    for (const [question, answer] of [
+      ["question-1", "answer-1"],
+      ["question-2", "answer-2"],
+      ["question-3", "answer-3"],
+    ]) {
+      const turnId = await recorder.startTurn(question);
+      await recorder.appendMessage(turnId, { role: "user", content: question });
+      await recorder.appendMessage(turnId, { role: "assistant", content: answer });
+      await recorder.completeTurn(turnId);
+    }
+
+    store.saveCompaction(session.id, "旧摘要", 1);
+    store.saveCompaction(session.id, "最新摘要", 2);
+    const snapshot = store.loadSnapshot(session.id, "/workspace");
+
+    assert.deepEqual(snapshot.messages, [
+      { role: "system", content: "会话历史摘要：\n最新摘要" },
+      { role: "user", content: "question-3" },
+      { role: "assistant", content: "answer-3" },
+    ]);
+    assert.deepEqual(snapshot.questions, [
+      "question-3",
+      "question-2",
+      "question-1",
+    ]);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("保存摘要不更新 Session 的活跃时间", async () => {
+  const fixture = await sessionFixture();
+  try {
+    let now = 100;
+    const store = new SessionStore(fixture.database, {
+      now: () => now,
+      createId: () => "session-1",
+    });
+    const session = store.createSession("/workspace", "model", "hash");
+
+    now = 200;
+    store.saveCompaction(session.id, "摘要", 1);
+
+    assert.equal(
+      record(
+        fixture.database
+          .prepare("SELECT updated_at FROM sessions WHERE id = ?")
+          .get(session.id),
+      ).updated_at,
+      100,
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("准备压缩内容时保留最近两个完整 Turn", async () => {
+  const fixture = await sessionFixture();
+  try {
+    const ids = [
+      "session-1",
+      "turn-1",
+      "turn-2",
+      "turn-3",
+      "turn-4",
+      "turn-5",
+    ];
+    const store = new SessionStore(fixture.database, {
+      now: () => 100,
+      createId: () => ids.shift()!,
+    });
+    const session = store.createSession("/workspace", "model", "hash");
+    const recorder = store.recorder(session.id);
+
+    for (let sequence = 1; sequence <= 5; sequence += 1) {
+      const turnId = await recorder.startTurn(`question-${sequence}`);
+      await recorder.appendMessage(turnId, {
+        role: "user",
+        content: `question-${sequence}`,
+      });
+      await recorder.appendMessage(turnId, {
+        role: "assistant",
+        content: `answer-${sequence}`,
+      });
+      await recorder.completeTurn(turnId);
+    }
+    assert.ok(recorder.saveCompaction);
+    await recorder.saveCompaction("旧摘要", 1);
+
+    assert.ok(recorder.prepareCompaction);
+    assert.deepEqual(await recorder.prepareCompaction(), {
+      previousSummary: "旧摘要",
+      throughTurnSequence: 3,
+      messages: [
+        { role: "user", content: "question-2" },
+        { role: "assistant", content: "answer-2" },
+        { role: "user", content: "question-3" },
+        { role: "assistant", content: "answer-3" },
+      ],
+      recentMessages: [
+        { role: "user", content: "question-4" },
+        { role: "assistant", content: "answer-4" },
+        { role: "user", content: "question-5" },
+        { role: "assistant", content: "answer-5" },
+      ],
+    });
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("损坏的消息 JSON 返回 Message ID 且不泄露正文", async () => {
   const fixture = await sessionFixture();
   try {

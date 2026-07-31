@@ -235,6 +235,7 @@ export async function runCli(): Promise<void> {
       runtime.maxSteps,
       snapshot?.messages ?? [],
       sessionStore.recorder(session.id),
+      runtime.provider.context_window,
     );
     console.log(`Session: ${session.id}`);
     console.log(`ReAct Agent 已启动，工作目录: ${workspace}`);

@@ -9,6 +9,7 @@ export type Provider = {
   AGENT_API_KEY: string;
   base_url: string;
   model: string;
+  context_window: number;
 };
 
 export type Runtime = {
@@ -49,6 +50,14 @@ export async function loadRuntime(root = BASE_DIR): Promise<Runtime> {
     if (!provider[key])
       throw new Error(`供应商 ${providerName} 缺少配置: ${key}`);
   }
+  const contextWindow = provider.context_window;
+  if (
+    typeof contextWindow !== "number" ||
+    !Number.isInteger(contextWindow) ||
+    contextWindow < 1
+  ) {
+    throw new Error(`供应商 ${providerName} 的 context_window 必须是正整数`);
+  }
 
   // 3. 读取 prompts.toml，根据 agent.prompt 字段加载对应的系统提示词文件
   const agentConfig = record(config.agent);
@@ -76,7 +85,12 @@ export async function loadRuntime(root = BASE_DIR): Promise<Runtime> {
   if (!Number.isInteger(maxSteps) || Number(maxSteps) < 1)
     throw new Error("max_steps 必须是正整数");
   return {
-    provider: provider as Provider,
+    provider: {
+      AGENT_API_KEY: String(provider.AGENT_API_KEY),
+      base_url: String(provider.base_url),
+      model: String(provider.model),
+      context_window: contextWindow,
+    },
     prompt,
     maxSteps: Number(maxSteps),
   };

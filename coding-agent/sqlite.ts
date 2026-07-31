@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-export const CURRENT_SCHEMA_VERSION = 1;
+export const CURRENT_SCHEMA_VERSION = 2;
 export const STATE_DIRECTORY_MODE = 0o700;
 export const STATE_DATABASE_MODE = 0o600;
 
@@ -70,6 +70,21 @@ const MIGRATIONS: Migration[] = [
 
       CREATE INDEX messages_session_sequence_idx
       ON messages(session_id, sequence);
+    `,
+  },
+  {
+    version: 2,
+    sql: `
+      CREATE TABLE compactions (
+        session_id TEXT PRIMARY KEY,
+        summary TEXT NOT NULL,
+        through_turn_sequence INTEGER NOT NULL
+          CHECK (through_turn_sequence >= 0),
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (session_id)
+          REFERENCES sessions(id)
+          ON DELETE CASCADE
+      );
     `,
   },
 ];
