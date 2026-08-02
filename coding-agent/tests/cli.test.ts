@@ -529,3 +529,27 @@ test("CLI 在最终回答后展示整轮文件 Diff", () => {
     ].join("\n"),
   );
 });
+
+test("CLI 为最终回答和 Diff 添加终端颜色且保留原文", () => {
+  const formatTurnOutput = (cliModule as Record<string, unknown>)
+    .formatTurnOutput;
+  assert.equal(typeof formatTurnOutput, "function");
+  if (typeof formatTurnOutput !== "function") return;
+
+  const colored = String(formatTurnOutput("finished", [{
+    path: "example.ts",
+    diff: "@@ -1,1 +1,1 @@\n-old\n+new\n",
+    truncated: false,
+  }], true));
+
+  assert.match(colored, /\x1b\[38;2;/);
+  assert.equal(
+    colored.replaceAll(/\x1b\[[0-9;]+m/g, ""),
+    [
+      "Agent: finished",
+      "",
+      "[Changes] example.ts",
+      "@@ -1,1 +1,1 @@\n-old\n+new",
+    ].join("\n"),
+  );
+});

@@ -14,6 +14,12 @@ import {
   STATE_PRIVACY_NOTICE,
   stateDatabasePath,
 } from "./sqlite.ts";
+import {
+  styleDiff,
+  styleRuntimeLine,
+  styleText,
+  terminalColorsEnabled,
+} from "./terminal_style.ts";
 import { configureWorkspace } from "./tools/index.ts";
 import { assertMacOsSandboxAvailable } from "./tools/macos_sandbox.ts";
 import { loadTools } from "./tools/registry.ts";
@@ -149,14 +155,19 @@ export function formatTokenUsage(usage: TokenUsage): string {
 export function formatTurnOutput(
   answer: string,
   changes: FileChange[],
+  colorsEnabled = false,
 ): string {
-  const sections = [`Agent: ${answer}`];
+  const sections = [
+    styleText(`Agent: ${answer}`, "success", colorsEnabled),
+  ];
   for (const change of changes) {
     const lines = [
-      `[Changes] ${change.path}`,
-      change.diff.trimEnd(),
+      styleText(`[Changes] ${change.path}`, "heading", colorsEnabled),
+      styleDiff(change.diff.trimEnd(), colorsEnabled),
     ];
-    if (change.truncated) lines.push("[Diff 已截断]");
+    if (change.truncated) {
+      lines.push(styleText("[Diff 已截断]", "warning", colorsEnabled));
+    }
     sections.push(lines.join("\n"));
   }
   return sections.join("\n\n");
@@ -187,6 +198,13 @@ export async function runCli(): Promise<void> {
   // 1. 解析工作目录并确认 macOS 沙箱可用（默认当前目录）
   const cliArguments = parseCliArguments(process.argv.slice(2));
   const workspace = prepareCliWorkspace(cliArguments.workspace);
+  const colorsEnabled = terminalColorsEnabled(stdout);
+  const runtimeOutput = (line: string) => {
+    console.log(styleRuntimeLine(line, colorsEnabled));
+  };
+  const warningOutput = (line: string) => {
+    console.log(styleText(line, "warning", colorsEnabled));
+  };
   // 2. 加载运行时配置（provider / prompt / maxSteps）
   const runtime = await loadRuntime();
   // 3. 初始化状态数据库；失败时直接终止启动，不降级为无持久化模式
@@ -216,7 +234,10 @@ export async function runCli(): Promise<void> {
     // 6. 加载工具，并将终端审批回调注入统一权限系统
     const tools = await loadTools(
       undefined,
-      createApprovalPrompt(createApprovalQuestioner(terminal)),
+      createApprovalPrompt(
+        createApprovalQuestioner(terminal),
+        warningOutput,
+      ),
     );
     // 7. 创建 OpenAI 兼容客户端（支持任意兼容 API 的服务）
     const client = new OpenAI({
@@ -264,12 +285,15 @@ export async function runCli(): Promise<void> {
       if (!userInput) continue;
       try {
         // 调用 Agent 处理本轮对话，最多 maxSteps 步
-        const answer = await agent.runTurn(userInput);
-        console.log(formatTurnOutput(answer, agent.lastTurnFileChanges));
+        const answer = await agent.runTurn(userInput, runtimeOutput);
+        console.log(formatTurnOutput(
+          answer,
+          agent.lastTurnFileChanges,
+          colorsEnabled,
+        ));
       } catch (error) {
-        console.log(
-          `Agent 错误: ${error instanceof Error ? error.message : error}`,
-        );
+        const message = `Agent 错误: ${error instanceof Error ? error.message : error}`;
+        console.log(styleText(message, "error", colorsEnabled));
       }
     }
     console.log(formatTokenUsage(agent.tokenUsage));
