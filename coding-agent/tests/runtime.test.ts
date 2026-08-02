@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import { ReActAgent, sanitizeUnicode } from "../runtime.ts";
 import type { AgentMessage, SessionRecorder } from "../runtime.ts";
+import { configureWorkspace, edit_file } from "../tools/index.ts";
 import { ToolRegistry } from "../tools/registry.ts";
 import type { ToolHandler } from "../tools/registry.ts";
 
@@ -45,6 +49,10 @@ function fakeClient(...messages: ReturnType<typeof message>[]) {
       },
     },
   };
+}
+
+async function temporaryDirectory(): Promise<string> {
+  return mkdtemp(path.join(tmpdir(), "coding-agent-runtime-test-"));
 }
 
 test("sanitizeUnicode 清洗嵌套的孤立代理项", () => {
@@ -534,6 +542,56 @@ test("ReActAgent 执行工具并记录 Observation", async () => {
   });
   assert.ok(output.some((line) => line.includes("Action:")));
   assert.ok(output.some((line) => line.includes("Observation:")));
+});
+
+test("ReActAgent 汇总同一 Turn 的文件修改", async () => {
+  const root = await temporaryDirectory();
+  await writeFile(path.join(root, "example.ts"), "const enabled = false;\n");
+  configureWorkspace(root);
+  const editFileSpec = [{
+    type: "function" as const,
+    function: {
+      name: "edit_file",
+      parameters: {
+        type: "object",
+        properties: {
+          path: { type: "string" },
+          old_text: { type: "string" },
+          new_text: { type: "string" },
+        },
+        required: ["path", "old_text", "new_text"],
+        additionalProperties: false,
+      },
+    },
+  }];
+  const { client } = fakeClient(
+    message(null, [toolCall("edit_file", JSON.stringify({
+      path: "example.ts",
+      old_text: "const enabled = false;",
+      new_text: "const enabled = 'middle';",
+    }), "call-1")]),
+    message(null, [toolCall("edit_file", JSON.stringify({
+      path: "example.ts",
+      old_text: "const enabled = 'middle';",
+      new_text: "const enabled = true;",
+    }), "call-2")]),
+    message("finished"),
+  );
+  const agent = new ReActAgent(
+    client,
+    "model-x",
+    "prompt",
+    new ToolRegistry(editFileSpec, { edit_file }),
+    3,
+  );
+
+  await agent.runTurn("edit file", () => undefined);
+
+  assert.equal(agent.lastTurnFileChanges.length, 1);
+  assert.equal(agent.lastTurnFileChanges[0]?.path, "example.ts");
+  assert.match(agent.lastTurnFileChanges[0]?.diff ?? "", /-const enabled = false;/);
+  assert.match(agent.lastTurnFileChanges[0]?.diff ?? "", /\+const enabled = true;/);
+  assert.doesNotMatch(agent.lastTurnFileChanges[0]?.diff ?? "", /middle/);
 });
 
 test("ReActAgent 将工具执行结果记录为 tool message", async () => {

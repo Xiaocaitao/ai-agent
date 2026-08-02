@@ -5,10 +5,13 @@ import { pathToFileURL } from "node:url";
 import { Ajv } from "ajv";
 import type { ErrorObject, ValidateFunction } from "ajv";
 
+import { FileChangeTracker } from "../file_change_tracker.ts";
+import type { FileChange, FileChangeCapture } from "../file_change_tracker.ts";
 import { PermissionEngine } from "./permissions.ts";
 import type { ApprovalPrompt, PermissionAction } from "./permissions.ts";
 
 const BASE_DIR = path.resolve(import.meta.dirname, "..");
+const FILE_CHANGE_TOOLS = new Set(["edit_file", "write_file"]);
 
 export type ToolHandler = (
   argumentsValue: Record<string, unknown>,
@@ -40,6 +43,13 @@ function read(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
 }
 
+function addFileChange(result: unknown, change: FileChange): unknown {
+  if (result !== null && typeof result === "object" && !Array.isArray(result)) {
+    return { ...result, file_change: change };
+  }
+  return { result, file_change: change };
+}
+
 async function readJson(filePath: string): Promise<Record<string, unknown>> {
   try {
     return record(JSON.parse(await readFile(filePath, "utf8")));
@@ -65,6 +75,7 @@ export class ToolRegistry {
   private readonly handlers: Record<string, ToolHandler>;
   private readonly validators = new Map<string, ValidateFunction>();
   private readonly permissions: PermissionEngine;
+  private readonly fileChanges = new FileChangeTracker();
 
   constructor(
     specs: ToolSpec[],
@@ -98,6 +109,14 @@ export class ToolRegistry {
       if (!this.validators.has(name))
         throw new Error(`工具 ${name} 缺少参数 Schema`);
     }
+  }
+
+  beginTurn(): void {
+    this.fileChanges.beginTurn();
+  }
+
+  finishTurn(): FileChange[] {
+    return this.fileChanges.finishTurn();
   }
 
   // 统一执行入口：参数先校验、权限后判断，只有两者通过才能调用实际 Handler。
@@ -137,8 +156,22 @@ export class ToolRegistry {
           },
         });
       }
-      const result = await handler(argumentsValue as Record<string, unknown>);
-      return typeof result === "string" ? result : JSON.stringify(result);
+      const toolArguments = argumentsValue as Record<string, unknown>;
+      let capture: FileChangeCapture | undefined;
+      if (FILE_CHANGE_TOOLS.has(name)) {
+        capture = await this.fileChanges.captureBefore(String(toolArguments.path ?? ""));
+      }
+
+      const result = await handler(toolArguments);
+      const change = capture === undefined
+        ? undefined
+        : await this.fileChanges.captureAfter(capture);
+      const observation = change === undefined
+        ? result
+        : addFileChange(result, change);
+      return typeof observation === "string"
+        ? observation
+        : JSON.stringify(observation);
     } catch (error) {
       return error instanceof SyntaxError
         ? `参数不是合法 JSON: ${rawArguments}`

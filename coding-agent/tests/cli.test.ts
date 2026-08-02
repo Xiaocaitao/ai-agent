@@ -507,3 +507,25 @@ test("CLI 格式化退出时的 Token 汇总", () => {
     "本次会话 Token 用量：\n输入：1234\n输出：567\n总计：1801",
   );
 });
+
+test("CLI 在最终回答后展示整轮文件 Diff", () => {
+  const formatTurnOutput = (cliModule as Record<string, unknown>)
+    .formatTurnOutput;
+  assert.equal(typeof formatTurnOutput, "function");
+  if (typeof formatTurnOutput !== "function") return;
+
+  assert.equal(
+    formatTurnOutput("finished", [{
+      path: "example.ts",
+      diff: "--- a/example.ts\n+++ b/example.ts\n-old\n+new\n",
+      truncated: true,
+    }]),
+    [
+      "Agent: finished",
+      "",
+      "[Changes] example.ts",
+      "--- a/example.ts\n+++ b/example.ts\n-old\n+new",
+      "[Diff 已截断]",
+    ].join("\n"),
+  );
+});

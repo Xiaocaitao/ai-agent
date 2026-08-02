@@ -5,6 +5,7 @@ import { createInterface } from "node:readline/promises";
 import OpenAI from "openai";
 
 import { loadRuntime } from "./config.ts";
+import type { FileChange } from "./file_change_tracker.ts";
 import { ReActAgent } from "./runtime.ts";
 import type { ChatClient, TokenUsage } from "./runtime.ts";
 import { SessionStore } from "./session/store.ts";
@@ -145,6 +146,22 @@ export function formatTokenUsage(usage: TokenUsage): string {
   ].join("\n");
 }
 
+export function formatTurnOutput(
+  answer: string,
+  changes: FileChange[],
+): string {
+  const sections = [`Agent: ${answer}`];
+  for (const change of changes) {
+    const lines = [
+      `[Changes] ${change.path}`,
+      change.diff.trimEnd(),
+    ];
+    if (change.truncated) lines.push("[Diff 已截断]");
+    sections.push(lines.join("\n"));
+  }
+  return sections.join("\n\n");
+}
+
 export function createApprovalPrompt(
   terminal: Questioner,
   output: (line: string) => void = console.log,
@@ -247,7 +264,8 @@ export async function runCli(): Promise<void> {
       if (!userInput) continue;
       try {
         // 调用 Agent 处理本轮对话，最多 maxSteps 步
-        console.log(`Agent: ${await agent.runTurn(userInput)}`);
+        const answer = await agent.runTurn(userInput);
+        console.log(formatTurnOutput(answer, agent.lastTurnFileChanges));
       } catch (error) {
         console.log(
           `Agent 错误: ${error instanceof Error ? error.message : error}`,

@@ -1,4 +1,5 @@
 import { ToolRegistry } from "./tools/registry.ts";
+import type { FileChange } from "./file_change_tracker.ts";
 
 // LLM 返回的单个工具调用结构
 type ToolCall = {
@@ -186,6 +187,7 @@ export class ReActAgent {
   private readonly recorder?: SessionRecorder;
   private readonly contextWindow?: number;
   private pendingCompaction = false;
+  private lastFileChanges: FileChange[] = [];
   private readonly usage: TokenUsage = {
     inputTokens: 0,
     outputTokens: 0,
@@ -221,6 +223,11 @@ export class ReActAgent {
 
   get compactionPending(): boolean {
     return this.pendingCompaction;
+  }
+
+  get lastTurnFileChanges(): FileChange[] {
+    // 返回一个数组对象copy给外部
+    return this.lastFileChanges.map((change) => ({ ...change }));
   }
 
   // 更新完改状态
@@ -302,6 +309,8 @@ export class ReActAgent {
     userInput: string,
     output: (line: string) => void = console.log,
   ): Promise<string> {
+    this.lastFileChanges = [];
+    this.tools.beginTurn();
     // 上一轮没来得及压缩
     const preTurnCompaction = this.pendingCompaction
       ? await this.compactContext([], output)
@@ -424,6 +433,8 @@ export class ReActAgent {
         await this.recorder?.failTurn(turnId, error);
       }
       throw error;
+    } finally {
+      this.lastFileChanges = this.tools.finishTurn();
     }
   }
 }

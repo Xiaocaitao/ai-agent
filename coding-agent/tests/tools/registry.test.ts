@@ -6,6 +6,7 @@ import test from "node:test";
 
 import { loadTools, ToolRegistry } from "../../tools/registry.ts";
 import { PermissionEngine } from "../../tools/permissions.ts";
+import { configureWorkspace, edit_file } from "../../tools/index.ts";
 
 async function temporaryDirectory(): Promise<string> {
   return mkdtemp(path.join(tmpdir(), "coding-agent-registry-test-"));
@@ -67,6 +68,44 @@ test("ToolRegistry 统一执行工具并返回 Observation", async () => {
   );
   assert.equal(await registry.execute("missing", "{}"), "未注册工具: missing");
   assert.equal(await registry.execute("echo", "{"), "参数不是合法 JSON: {");
+});
+
+test("文件工具的 Observation 包含本次修改 Diff", async () => {
+  const root = await temporaryDirectory();
+  await writeFile(path.join(root, "example.ts"), "const enabled = false;\n");
+  configureWorkspace(root);
+
+  const registry = new ToolRegistry(
+    [{
+      type: "function",
+      function: {
+        name: "edit_file",
+        parameters: {
+          type: "object",
+          properties: {
+            path: { type: "string" },
+            old_text: { type: "string" },
+            new_text: { type: "string" },
+          },
+          required: ["path", "old_text", "new_text"],
+          additionalProperties: false,
+        },
+      },
+    }],
+    { edit_file },
+  );
+
+  const observation = JSON.parse(await registry.execute("edit_file", JSON.stringify({
+    path: "example.ts",
+    old_text: "const enabled = false;",
+    new_text: "const enabled = true;",
+  })));
+
+  assert.equal(observation.ok, true);
+  assert.equal(observation.file_change.path, "example.ts");
+  assert.match(observation.file_change.diff, /-const enabled = false;/);
+  assert.match(observation.file_change.diff, /\+const enabled = true;/);
+  assert.equal(observation.file_change.truncated, false);
 });
 
 test("ToolRegistry 在权限拒绝时不执行 Handler", async () => {
