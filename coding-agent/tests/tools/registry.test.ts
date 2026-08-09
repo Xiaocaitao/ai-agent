@@ -20,7 +20,7 @@ test("loadTools 加载项目工具并支持空注册表", async () => {
 
   const registry = await loadTools();
   assert.deepEqual(
-    registry.specs.map((spec) => spec.function.name).sort(),
+    registry.specs.map((spec) => spec.name).sort(),
     ["edit_file", "read_file", "run_command", "search_files", "write_file"],
   );
 });
@@ -49,15 +49,14 @@ test("ToolRegistry 统一执行工具并返回 Observation", async () => {
   const registry = new ToolRegistry(
     [{
       type: "function",
-      function: {
-        name: "echo",
-        parameters: {
-          type: "object",
-          properties: { text: { type: "string" } },
-          required: ["text"],
-          additionalProperties: false,
-        },
+      name: "echo",
+      parameters: {
+        type: "object",
+        properties: { text: { type: "string" } },
+        required: ["text"],
+        additionalProperties: false,
       },
+      strict: false,
     }],
     { echo: ({ text }) => ({ ok: true, data: { text }, error: null }) },
   );
@@ -78,19 +77,18 @@ test("文件工具的 Observation 包含本次修改 Diff", async () => {
   const registry = new ToolRegistry(
     [{
       type: "function",
-      function: {
-        name: "edit_file",
-        parameters: {
-          type: "object",
-          properties: {
-            path: { type: "string" },
-            old_text: { type: "string" },
-            new_text: { type: "string" },
-          },
-          required: ["path", "old_text", "new_text"],
-          additionalProperties: false,
+      name: "edit_file",
+      parameters: {
+        type: "object",
+        properties: {
+          path: { type: "string" },
+          old_text: { type: "string" },
+          new_text: { type: "string" },
         },
+        required: ["path", "old_text", "new_text"],
+        additionalProperties: false,
       },
+      strict: false,
     }],
     { edit_file },
   );
@@ -113,7 +111,9 @@ test("ToolRegistry 在权限拒绝时不执行 Handler", async () => {
   const registry = new ToolRegistry(
     [{
       type: "function",
-      function: { name: "write", parameters: { type: "object" } },
+      name: "write",
+      parameters: { type: "object" },
+      strict: false,
     }],
     { write: () => { executed = true; } },
     new PermissionEngine({ write: "deny" }),
@@ -130,7 +130,12 @@ test("ToolRegistry 在权限拒绝时不执行 Handler", async () => {
 
 test("用户拒绝审批只阻止当前轮，后续请求可以重新审批", async () => {
   const registry = new ToolRegistry(
-    [{ type: "function", function: { name: "write", parameters: { type: "object" } } }],
+    [{
+      type: "function",
+      name: "write",
+      parameters: { type: "object" },
+      strict: false,
+    }],
     { write: () => "ok" },
     new PermissionEngine({ write: "ask" }, async () => "reject"),
   );

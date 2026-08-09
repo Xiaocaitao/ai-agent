@@ -18,7 +18,7 @@ const enabled =
   process.env.RUN_MACOS_SANDBOX_TESTS === "1";
 
 test(
-  "Seatbelt 允许工作区写入并拒绝工作区外读写",
+  "Seatbelt 允许工作区读写并拒绝工作区外读写",
   { skip: !enabled },
   async () => {
     const root = await mkdtemp(
@@ -26,7 +26,7 @@ test(
     );
     const workspace = path.join(root, "workspace");
     const outside = path.join(root, "outside.txt");
-    const inside = path.join(workspace, "inside.txt");
+    const inside = path.join(workspace, "inside.js");
     await mkdir(workspace);
     await writeFile(outside, "outside");
     configureWorkspace(workspace);
@@ -35,11 +35,22 @@ test(
       const allowed = await runCommand([
         "/bin/sh",
         "-c",
-        "echo inside > inside.txt",
+        "echo inside > inside.js",
       ]);
       assert.equal(allowed.ok, true);
       assert.equal(allowed.data.sandboxed, true);
       assert.equal(await readFile(inside, "utf8"), "inside\n");
+
+      const insideRead = await runCommand(["/bin/cat", "inside.js"]);
+      assert.equal(insideRead.ok, true);
+      assert.equal(insideRead.data.stdout, "inside\n");
+
+      const nodeCheck = await runCommand([
+        process.execPath,
+        "--check",
+        "inside.js",
+      ]);
+      assert.equal(nodeCheck.ok, true);
 
       const readDenied = await runCommand(["/bin/cat", outside]);
       assert.equal(readDenied.ok, false);

@@ -6,8 +6,9 @@ import OpenAI from "openai";
 
 import { loadRuntime } from "./config.ts";
 import type { FileChange } from "./file_change_tracker.ts";
-import { ReActAgent } from "./runtime.ts";
-import type { ChatClient, TokenUsage } from "./runtime.ts";
+import { ReActAgent } from "./runtime/agent.ts";
+import type { ResponsesClient } from "./runtime/responses.ts";
+import type { TokenUsage } from "./runtime/usage.ts";
 import { SessionStore } from "./session/store.ts";
 import {
   initializeStateDatabase,
@@ -243,7 +244,7 @@ export async function runCli(): Promise<void> {
     const client = new OpenAI({
       apiKey: runtime.provider.AGENT_API_KEY,
       baseURL: runtime.provider.base_url,
-    }) as unknown as ChatClient;
+    }) as unknown as ResponsesClient;
     if (
       snapshot !== undefined &&
       snapshot.session.systemPromptHash !== systemPromptHash
@@ -271,7 +272,7 @@ export async function runCli(): Promise<void> {
       runtime.prompt,
       tools,
       runtime.maxSteps,
-      snapshot?.messages ?? [],
+      snapshot?.items ?? [],
       sessionStore.recorder(session.id),
       runtime.provider.context_window,
     );

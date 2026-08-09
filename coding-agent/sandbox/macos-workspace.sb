@@ -7,10 +7,13 @@
 (allow signal (target same-sandbox))
 (allow process-info* (target same-sandbox))
 
-; v1 允许读取非用户目录，拒绝整个用户主目录后只重新开放工作区。
-; 这样可以兼容 macOS 动态链接器、Node、Python 和常用 CLI。
+; 允许读取非用户目录和工作区，拒绝读取用户主目录中的其他文件内容。
+; 保留路径元数据读取，使 Node 可以解析位于主目录下的工作区真实路径。
 (allow file-read*)
-(deny file-read* (subpath (param "HOME_DIR")))
+(deny file-read-data
+  (require-all
+    (subpath (param "HOME_DIR"))
+    (require-not (subpath (param "WORKSPACE")))))
 (allow file-read* (subpath (param "WORKSPACE")))
 
 ; 即使工作区覆盖这些路径，敏感资源最终仍不可读。

@@ -10,6 +10,12 @@
 
 ## 功能更新日志
 
+### 2026-08-09
+
+- 模型请求迁移到 Responses API，使用原生 message、reasoning、function_call 和 function_call_output items 传递与持久化上下文。
+- Runtime 按 Agent 主流程、Responses 转换、Token 用量、日志、压缩和 Session 接口拆分为独立模块。
+- 修复 macOS Seatbelt 误拦截用户主目录内 workspace 路径解析的问题，Node 子进程可读取工作区文件，仍拒绝工作区外和敏感路径。
+
 ### 2026-08-01
 
 - 增加自动上下文压缩：根据供应商的 `context_window` 和响应 `usage` 监测占用率，达到 80% 时警告并触发 Compact。

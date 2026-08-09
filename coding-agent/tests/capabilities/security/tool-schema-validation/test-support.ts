@@ -2,7 +2,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { ReActAgent } from "../../../../runtime.ts";
+import { ReActAgent } from "../../../../runtime/agent.ts";
 import { configureWorkspace } from "../../../../tools/index.ts";
 import { loadTools } from "../../../../tools/registry.ts";
 
@@ -24,12 +24,34 @@ export async function createTestAgent(...responses: ReturnType<typeof message>[]
   const tools = await loadTools(undefined, async () => "once");
   const calls: unknown[] = [];
   const client = {
-    chat: {
-      completions: {
-        create: async (request: unknown) => {
-          calls.push(request);
-          return { choices: [{ message: responses.shift()! }] };
-        },
+    responses: {
+      create: async (request: unknown) => {
+        calls.push(request);
+        const current = responses.shift()!;
+        return {
+          output: [
+            ...(current.tool_calls ?? []).map((call) => ({
+              type: "function_call" as const,
+              call_id: call.id,
+              name: call.function.name,
+              arguments: call.function.arguments,
+            })),
+            ...(current.content === null ? [] : [{
+              id: "message-1",
+              type: "message" as const,
+              role: "assistant" as const,
+              status: "completed" as const,
+              content: [{
+                type: "output_text" as const,
+                text: current.content,
+                annotations: [],
+                logprobs: [],
+              }],
+            }]),
+          ],
+          output_text: current.content ?? "",
+          status: "completed" as const,
+        };
       },
     },
   };
@@ -40,6 +62,7 @@ export async function createTestAgent(...responses: ReturnType<typeof message>[]
   };
 }
 
-export function toolObservation(agent: ReActAgent, index = 3): Record<string, unknown> {
-  return JSON.parse(String(agent.messages[index]?.content)) as Record<string, unknown>;
+export function toolObservation(agent: ReActAgent): Record<string, unknown> {
+  const output = agent.items.find((item) => item.type === "function_call_output");
+  return JSON.parse(String(output?.output)) as Record<string, unknown>;
 }

@@ -19,9 +19,11 @@ test("模型收到校验原因后可以修正参数并重试", async () => {
   );
 
   assert.equal(await agent.runTurn("retry invalid arguments", () => undefined), "done");
-  const secondRequest = calls[1] as { messages: Array<{ role: string; content?: string }> };
-  const feedback = secondRequest.messages.at(-1);
-  assert.equal(feedback?.role, "tool");
-  assert.equal(JSON.parse(String(feedback?.content)).error, "工具参数校验失败");
+  const secondRequest = calls[1] as {
+    input: Array<{ type: string; output?: string }>;
+  };
+  const feedback = secondRequest.input.at(-1);
+  assert.equal(feedback?.type, "function_call_output");
+  assert.equal(JSON.parse(String(feedback?.output)).error, "工具参数校验失败");
   assert.equal(await readFile(path.join(root, "retried.txt"), "utf8"), "corrected");
 });

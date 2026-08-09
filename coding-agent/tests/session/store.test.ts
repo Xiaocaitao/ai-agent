@@ -87,11 +87,13 @@ test("记录并完成一个 Turn 的有序消息", async () => {
     const recorder = store.recorder(session.id);
 
     const turnId = await recorder.startTurn("hello");
-    await recorder.appendMessage(turnId, {
+    await recorder.appendItem(turnId, {
+      type: "message",
       role: "user",
       content: "hello",
     });
-    await recorder.appendMessage(turnId, {
+    await recorder.appendItem(turnId, {
+      type: "message",
       role: "assistant",
       content: "world",
     });
@@ -168,18 +170,21 @@ test("恢复时中断未完成 Turn 且只加载完整消息", async () => {
     const recorder = store.recorder(session.id);
 
     const completedTurn = await recorder.startTurn("completed question");
-    await recorder.appendMessage(completedTurn, {
+    await recorder.appendItem(completedTurn, {
+      type: "message",
       role: "user",
       content: "completed question",
     });
-    await recorder.appendMessage(completedTurn, {
+    await recorder.appendItem(completedTurn, {
+      type: "message",
       role: "assistant",
       content: "completed answer",
     });
     await recorder.completeTurn(completedTurn);
 
     const interruptedTurn = await recorder.startTurn("interrupted question");
-    await recorder.appendMessage(interruptedTurn, {
+    await recorder.appendItem(interruptedTurn, {
+      type: "message",
       role: "user",
       content: "interrupted question",
     });
@@ -188,10 +193,10 @@ test("恢复时中断未完成 Turn 且只加载完整消息", async () => {
 
     assert.equal(snapshot.interruptedTurns, 1);
     assert.deepEqual(
-      snapshot.messages.map(({ role, content }) => ({ role, content })),
+      snapshot.items,
       [
-        { role: "user", content: "completed question" },
-        { role: "assistant", content: "completed answer" },
+        { type: "message", role: "user", content: "completed question" },
+        { type: "message", role: "assistant", content: "completed answer" },
       ],
     );
     assert.deepEqual(snapshot.questions, [
@@ -228,8 +233,16 @@ test("恢复时用最新摘要替换压缩边界内的消息", async () => {
       ["question-3", "answer-3"],
     ]) {
       const turnId = await recorder.startTurn(question);
-      await recorder.appendMessage(turnId, { role: "user", content: question });
-      await recorder.appendMessage(turnId, { role: "assistant", content: answer });
+      await recorder.appendItem(turnId, {
+        type: "message",
+        role: "user",
+        content: question,
+      });
+      await recorder.appendItem(turnId, {
+        type: "message",
+        role: "assistant",
+        content: answer,
+      });
       await recorder.completeTurn(turnId);
     }
 
@@ -237,10 +250,10 @@ test("恢复时用最新摘要替换压缩边界内的消息", async () => {
     store.saveCompaction(session.id, "最新摘要", 2);
     const snapshot = store.loadSnapshot(session.id, "/workspace");
 
-    assert.deepEqual(snapshot.messages, [
-      { role: "system", content: "会话历史摘要：\n最新摘要" },
-      { role: "user", content: "question-3" },
-      { role: "assistant", content: "answer-3" },
+    assert.deepEqual(snapshot.items, [
+      { type: "message", role: "system", content: "会话历史摘要：\n最新摘要" },
+      { type: "message", role: "user", content: "question-3" },
+      { type: "message", role: "assistant", content: "answer-3" },
     ]);
     assert.deepEqual(snapshot.questions, [
       "question-3",
@@ -298,11 +311,13 @@ test("准备压缩内容时保留最近两个完整 Turn", async () => {
 
     for (let sequence = 1; sequence <= 5; sequence += 1) {
       const turnId = await recorder.startTurn(`question-${sequence}`);
-      await recorder.appendMessage(turnId, {
+      await recorder.appendItem(turnId, {
+        type: "message",
         role: "user",
         content: `question-${sequence}`,
       });
-      await recorder.appendMessage(turnId, {
+      await recorder.appendItem(turnId, {
+        type: "message",
         role: "assistant",
         content: `answer-${sequence}`,
       });
@@ -315,17 +330,17 @@ test("准备压缩内容时保留最近两个完整 Turn", async () => {
     assert.deepEqual(await recorder.prepareCompaction(), {
       previousSummary: "旧摘要",
       throughTurnSequence: 3,
-      messages: [
-        { role: "user", content: "question-2" },
-        { role: "assistant", content: "answer-2" },
-        { role: "user", content: "question-3" },
-        { role: "assistant", content: "answer-3" },
+      items: [
+        { type: "message", role: "user", content: "question-2" },
+        { type: "message", role: "assistant", content: "answer-2" },
+        { type: "message", role: "user", content: "question-3" },
+        { type: "message", role: "assistant", content: "answer-3" },
       ],
-      recentMessages: [
-        { role: "user", content: "question-4" },
-        { role: "assistant", content: "answer-4" },
-        { role: "user", content: "question-5" },
-        { role: "assistant", content: "answer-5" },
+      recentItems: [
+        { type: "message", role: "user", content: "question-4" },
+        { type: "message", role: "assistant", content: "answer-4" },
+        { type: "message", role: "user", content: "question-5" },
+        { type: "message", role: "assistant", content: "answer-5" },
       ],
     });
   } finally {
@@ -344,7 +359,8 @@ test("损坏的消息 JSON 返回 Message ID 且不泄露正文", async () => {
     const session = store.createSession("/workspace", "model", "hash");
     const recorder = store.recorder(session.id);
     const turnId = await recorder.startTurn("question");
-    await recorder.appendMessage(turnId, {
+    await recorder.appendItem(turnId, {
+      type: "message",
       role: "user",
       content: "question",
     });
@@ -369,6 +385,40 @@ test("损坏的消息 JSON 返回 Message ID 且不泄露正文", async () => {
         assert.doesNotMatch(message, /sensitive broken payload/);
         return true;
       },
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("恢复时拒绝缺少 type 的旧 Chat 消息", async () => {
+  const fixture = await sessionFixture();
+  try {
+    const ids = ["session-1", "turn-1"];
+    const store = new SessionStore(fixture.database, {
+      now: () => 100,
+      createId: () => ids.shift()!,
+    });
+    const session = store.createSession("/workspace", "model", "hash");
+    const recorder = store.recorder(session.id);
+    const turnId = await recorder.startTurn("question");
+    await recorder.appendItem(turnId, {
+      type: "message",
+      role: "assistant",
+      content: "answer",
+    });
+    await recorder.completeTurn(turnId);
+
+    const messageId = Number(record(fixture.database.prepare(
+      "SELECT id FROM messages WHERE turn_id = ?",
+    ).get(turnId)).id);
+    fixture.database.prepare(
+      "UPDATE messages SET payload_json = ? WHERE id = ?",
+    ).run(JSON.stringify({ role: "assistant", content: "legacy answer" }), messageId);
+
+    assert.throws(
+      () => store.loadSnapshot(session.id, "/workspace"),
+      new RegExp(`Message ${messageId} 数据损坏`),
     );
   } finally {
     await fixture.close();

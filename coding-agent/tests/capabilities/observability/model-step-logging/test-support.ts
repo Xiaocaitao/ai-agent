@@ -18,9 +18,33 @@ export function choice(messageValue: ReturnType<typeof message>, finishReason: s
 
 export function fakeClient(...choices: ReturnType<typeof choice>[]) {
   return {
-    chat: {
-      completions: {
-        create: async () => ({ choices: [{ ...choices.shift()! }] }),
+    responses: {
+      create: async () => {
+        const current = choices.shift()!;
+        return {
+          output: [
+            ...(current.message.tool_calls ?? []).map((call) => ({
+              type: "function_call" as const,
+              call_id: call.id,
+              name: call.function.name,
+              arguments: call.function.arguments,
+            })),
+            ...(current.message.content === null ? [] : [{
+              id: "message-1",
+              type: "message" as const,
+              role: "assistant" as const,
+              status: "completed" as const,
+              content: [{
+                type: "output_text" as const,
+                text: current.message.content,
+                annotations: [],
+                logprobs: [],
+              }],
+            }]),
+          ],
+          output_text: current.message.content ?? "",
+          status: "completed" as const,
+        };
       },
     },
   };
@@ -28,7 +52,9 @@ export function fakeClient(...choices: ReturnType<typeof choice>[]) {
 
 export const echoSpecs = [{
   type: "function" as const,
-  function: { name: "echo", parameters: { type: "object" } },
+  name: "echo",
+  parameters: { type: "object" },
+  strict: false,
 }];
 
 export const echoHandlers: Record<string, ToolHandler> = {

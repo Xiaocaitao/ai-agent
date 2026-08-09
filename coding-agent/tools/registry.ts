@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 
 import { Ajv } from "ajv";
 import type { ErrorObject, ValidateFunction } from "ajv";
+import type { FunctionTool } from "openai/resources/responses/responses";
 
 import { FileChangeTracker } from "../file_change_tracker.ts";
 import type { FileChange, FileChangeCapture } from "../file_change_tracker.ts";
@@ -17,13 +18,8 @@ export type ToolHandler = (
   argumentsValue: Record<string, unknown>,
 ) => unknown | Promise<unknown>;
 
-export type ToolSpec = {
-  type: "function";
-  function: {
-    name: string;
-    description?: string;
-    parameters: Record<string, unknown>;
-  };
+export type ToolSpec = Omit<FunctionTool, "parameters"> & {
+  parameters: Record<string, unknown>;
 };
 
 type ValidationDetail = {
@@ -81,7 +77,7 @@ export class ToolRegistry {
     specs: ToolSpec[],
     handlers: Record<string, ToolHandler>,
     permissions = new PermissionEngine(
-      Object.fromEntries(specs.map((spec) => [spec.function.name, "allow"])),
+      Object.fromEntries(specs.map((spec) => [spec.name, "allow"])),
     ),
   ) {
     this.specs = specs;
@@ -94,11 +90,11 @@ export class ToolRegistry {
       useDefaults: false,
     });
     for (const spec of specs) {
-      const name = spec.function.name;
-      if (spec.function.parameters.type !== "object")
+      const name = spec.name;
+      if (spec.parameters.type !== "object")
         throw new Error(`工具 ${name} 参数 Schema 必须声明 type: object`);
       try {
-        this.validators.set(name, ajv.compile(spec.function.parameters));
+        this.validators.set(name, ajv.compile(spec.parameters));
       } catch (error) {
         throw new Error(
           `工具 ${name} 参数 Schema 非法: ${error instanceof Error ? error.message : error}`,
@@ -230,11 +226,10 @@ export async function loadTools(
     }
     specs.push({
       type: "function",
-      function: {
-        name,
-        description: String(entry.description ?? ""),
-        parameters,
-      },
+      name,
+      description: String(entry.description ?? ""),
+      parameters,
+      strict: false,
     });
   }
   return new ToolRegistry(

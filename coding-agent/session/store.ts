@@ -1,12 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
-import { compactionMessage } from "../runtime.ts";
+import { compactionMessage } from "../runtime/compaction.ts";
+import type { AgentItem } from "../runtime/responses.ts";
 import type {
-  AgentMessage,
   CompactionInput,
   SessionRecorder,
-} from "../runtime.ts";
+} from "../runtime/session.ts";
 
 export type SessionRecord = {
   id: string;
@@ -19,7 +19,7 @@ export type SessionRecord = {
 
 export type SessionSnapshot = {
   session: SessionRecord;
-  messages: AgentMessage[];
+  items: AgentItem[];
   questions: string[];
   interruptedTurns: number;
 };
@@ -57,7 +57,7 @@ function sessionRecord(value: unknown): SessionRecord {
   };
 }
 
-function agentMessage(value: unknown): AgentMessage {
+function storedAgentItems(value: unknown): AgentItem[] {
   const message = record(value);
   if (
     typeof message.id !== "number" ||
@@ -66,7 +66,16 @@ function agentMessage(value: unknown): AgentMessage {
     throw new Error("Message 数据损坏");
   }
   try {
-    return JSON.parse(message.payload_json) as AgentMessage;
+    const payload = record(JSON.parse(message.payload_json));
+    if (![
+      "message",
+      "reasoning",
+      "function_call",
+      "function_call_output",
+    ].includes(String(payload.type))) {
+      throw new Error("不是支持的 Responses item");
+    }
+    return [payload as AgentItem];
   } catch {
     throw new Error(`Message ${message.id} 数据损坏`);
   }
@@ -188,7 +197,7 @@ export class SessionStore {
     if (typeof boundary.sequence !== "number") return undefined;
 
     // 收集待压缩完整message
-    const messages = this.database.prepare(`
+    const items = this.database.prepare(`
       SELECT messages.id, messages.payload_json
       FROM messages
       JOIN turns ON turns.id = messages.turn_id
@@ -197,10 +206,10 @@ export class SessionStore {
         AND turns.sequence > ?
         AND turns.sequence <= ?
       ORDER BY messages.sequence
-    `).all(sessionId, previousBoundary, boundary.sequence).map(agentMessage);
+    `).all(sessionId, previousBoundary, boundary.sequence).flatMap(storedAgentItems);
 
     // 当前会话最近的两次message
-    const recentMessages = this.database.prepare(`
+    const recentItems = this.database.prepare(`
       SELECT messages.id, messages.payload_json
       FROM messages
       JOIN turns ON turns.id = messages.turn_id
@@ -208,13 +217,13 @@ export class SessionStore {
         AND turns.status = 'completed'
         AND turns.sequence > ?
       ORDER BY messages.sequence
-    `).all(sessionId, boundary.sequence).map(agentMessage);
+    `).all(sessionId, boundary.sequence).flatMap(storedAgentItems);
 
     return {
       previousSummary: hasCompaction ? String(compaction.summary) : undefined,
       throughTurnSequence: boundary.sequence,
-      messages,
-      recentMessages,
+      items,
+      recentItems,
     };
   }
 
@@ -265,7 +274,7 @@ export class SessionStore {
         : 0;
 
       // 拉未被压缩的完整消息
-      const storedMessages = this.database.prepare(`
+      const storedItems = this.database.prepare(`
         SELECT messages.id, messages.payload_json
         FROM messages
         JOIN turns ON turns.id = messages.turn_id
@@ -273,16 +282,14 @@ export class SessionStore {
           AND turns.status = 'completed'
           AND turns.sequence > ?
         ORDER BY messages.sequence
-      `).all(sessionId, throughTurnSequence).map((value) => {
-        return agentMessage(value);
-      });
-      const messages: AgentMessage[] = hasCompaction
+      `).all(sessionId, throughTurnSequence).flatMap(storedAgentItems);
+      const items: AgentItem[] = hasCompaction
         ? [
             // 摘要包装
             compactionMessage(String(compaction.summary)),
-            ...storedMessages,
+            ...storedItems,
           ]
-        : storedMessages;
+        : storedItems;
 
       const questions = this.database.prepare(`
         SELECT user_input
@@ -301,7 +308,7 @@ export class SessionStore {
 
       return {
         session,
-        messages,
+        items,
         questions,
         interruptedTurns: Number(interrupted.changes),
       };
@@ -312,8 +319,8 @@ export class SessionStore {
   recorder(sessionId: string): SessionRecorder {
     return {
       startTurn: async (userInput) => this.startTurn(sessionId, userInput),
-      appendMessage: async (turnId, message) =>
-        this.appendMessage(sessionId, turnId, message),
+      appendItem: async (turnId, item) =>
+        this.appendItem(sessionId, turnId, item),
       completeTurn: async (turnId) =>
         this.finishTurn(sessionId, turnId, "completed"),
       failTurn: async (turnId, error) =>
@@ -382,10 +389,10 @@ export class SessionStore {
     });
   }
 
-  private appendMessage(
+  private appendItem(
     sessionId: string,
     turnId: string,
-    message: AgentMessage,
+    item: AgentItem,
   ): void {
     this.transaction(() => {
       const turn = this.database.prepare(`
@@ -407,8 +414,10 @@ export class SessionStore {
         sessionId,
         turnId,
         sequence,
-        message.role,
-        JSON.stringify(message),
+        item.type === "message" || item.type === undefined
+          ? item.role
+          : item.type,
+        JSON.stringify(item),
         timestamp,
       );
       this.touchSession(sessionId, timestamp);
