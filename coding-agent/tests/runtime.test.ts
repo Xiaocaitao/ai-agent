@@ -8,6 +8,7 @@ import { ReActAgent } from "../runtime/agent.ts";
 import { sanitizeUnicode } from "../runtime/responses.ts";
 import type { AgentItem } from "../runtime/responses.ts";
 import type { SessionRecorder } from "../runtime/session.ts";
+import { responseForRequest } from "./support/responses.ts";
 import { configureWorkspace, edit_file } from "../tools/index.ts";
 import { ToolRegistry } from "../tools/registry.ts";
 import type { ToolHandler } from "../tools/registry.ts";
@@ -46,7 +47,7 @@ function fakeClient(...messages: ReturnType<typeof message>[]) {
       responses: {
         create: async (request: unknown) => {
           calls.push(request);
-          return modelResponse(messages.shift()!);
+          return responseForRequest(request, modelResponse(messages.shift()!));
         },
       },
     },
@@ -245,11 +246,11 @@ test("ReActAgent 使用当前模型生成上下文摘要", async () => {
     responses: {
       create: async (request: unknown) => {
         calls.push(request);
-        return modelResponse(message("  新摘要  "), {
+        return responseForRequest(request, modelResponse(message("  新摘要  "), {
           input_tokens: 100,
           output_tokens: 20,
           total_tokens: 120,
-        });
+        }));
       },
     },
   };
@@ -305,12 +306,12 @@ test("ReActAgent 拒绝模型返回的空摘要", async () => {
 });
 
 test("ReActAgent 应用压缩结果后替换历史并清除待压缩标记", async () => {
-  const client = { responses: { create: async () =>
-    modelResponse(message("current answer"), {
+  const client = { responses: { create: async (request: unknown) =>
+    responseForRequest(request, modelResponse(message("current answer"), {
       input_tokens: 800_000,
       output_tokens: 1,
       total_tokens: 800_001,
-    }) } };
+    })) } };
   const agent = new ReActAgent(
     client,
     "model-x",
@@ -356,7 +357,7 @@ test("ReActAgent 在下一 ReAct Step 前压缩旧 Turn 并保留当前 Turn", a
     responses: {
       create: async (request: Record<string, unknown>) => {
         requests.push(request);
-        return responses.shift()!;
+        return responseForRequest(request, responses.shift()!);
       },
     },
   };
@@ -450,7 +451,10 @@ test("ReActAgent 在最终回答完成后由 Runtime 执行压缩", async () => 
     },
   };
   const client = {
-    responses: { create: async () => responses.shift()! },
+    responses: {
+      create: async (request: unknown) =>
+        responseForRequest(request, responses.shift()!),
+    },
   };
   const agent = new ReActAgent(
     client,
@@ -486,10 +490,10 @@ test("ReActAgent 压缩失败时保留原上下文并继续返回最终回答", 
   ];
   const client = {
     responses: {
-      create: async () => {
+      create: async (request: unknown) => {
         const response = responses.shift();
         if (response === undefined) throw new Error("summary unavailable");
-        return response;
+        return responseForRequest(request, response);
       },
     },
   };
@@ -727,7 +731,10 @@ test("ReActAgent 累计本次会话的模型 Token 用量", async () => {
     }),
   ];
   const client = {
-    responses: { create: async () => responses.shift()! },
+    responses: {
+      create: async (request: unknown) =>
+        responseForRequest(request, responses.shift()!),
+    },
   };
   const agent = new ReActAgent(
     client,
@@ -753,11 +760,12 @@ test("ReActAgent 只在上下文达到 80% 时警告并标记待压缩", async (
     const output: string[] = [];
     const client = {
       responses: {
-        create: async () => modelResponse(message("finished"), {
-          input_tokens: item.promptTokens,
-          output_tokens: 1,
-          total_tokens: item.promptTokens + 1,
-        }),
+        create: async (request: unknown) =>
+          responseForRequest(request, modelResponse(message("finished"), {
+            input_tokens: item.promptTokens,
+            output_tokens: 1,
+            total_tokens: item.promptTokens + 1,
+          })),
       },
     };
     const agent = new ReActAgent(

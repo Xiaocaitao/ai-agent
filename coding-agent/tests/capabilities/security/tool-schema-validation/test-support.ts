@@ -5,6 +5,7 @@ import path from "node:path";
 import { ReActAgent } from "../../../../runtime/agent.ts";
 import { configureWorkspace } from "../../../../tools/index.ts";
 import { loadTools } from "../../../../tools/registry.ts";
+import { responseForRequest } from "../../../support/responses.ts";
 
 export function toolCall(name: string, argumentsValue: Record<string, unknown>, id = name) {
   return {
@@ -28,7 +29,7 @@ export async function createTestAgent(...responses: ReturnType<typeof message>[]
       create: async (request: unknown) => {
         calls.push(request);
         const current = responses.shift()!;
-        return {
+        return responseForRequest(request, {
           output: [
             ...(current.tool_calls ?? []).map((call) => ({
               type: "function_call" as const,
@@ -51,7 +52,7 @@ export async function createTestAgent(...responses: ReturnType<typeof message>[]
           ],
           output_text: current.content ?? "",
           status: "completed" as const,
-        };
+        });
       },
     },
   };

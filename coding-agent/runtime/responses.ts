@@ -4,6 +4,8 @@ import type {
   ResponseOutputItem,
   ResponseOutputMessage,
   ResponseReasoningItem,
+  ResponseStatus,
+  ResponseStreamEvent,
 } from "openai/resources/responses/responses";
 import type { ModelUsage } from "./usage.ts";
 
@@ -21,19 +23,62 @@ export type AgentItem =
   | ResponseFunctionToolCall // 模型发起的工具调用
   | FunctionCallOutputItem; // 工具执行后的结果
 
+export type ModelResponse = {
+  output: ResponseOutputItem[];
+  output_text?: string;
+  status?: ResponseStatus;
+  usage?: ModelUsage;
+  error?: { message?: string } | null;
+  incomplete_details?: { reason?: string } | null;
+};
+
+export type ResponseDelta = {
+  kind: "reasoning" | "answer";
+  text: string;
+};
+
+// 异步事件流
+export type ResponseEventStream = AsyncIterable<ResponseStreamEvent>;
+
 // OpenAI 兼容 ResponsesClient 接口抽象
 export type ResponsesClient = {
   responses: {
-    create(request: Record<string, unknown>): Promise<{
-      output: ResponseOutputItem[];
-      output_text?: string;
-      status?: "completed" | "incomplete" | "failed" | "in_progress";
-      usage?: ModelUsage;
-      error?: { message?: string } | null;
-      incomplete_details?: { reason?: string } | null;
-    }>;
+    create(
+      request: Record<string, unknown>,
+    ): Promise<ModelResponse | ResponseEventStream>;
   };
 };
+
+export function isResponseEventStream(
+  value: ModelResponse | ResponseEventStream,
+): value is ResponseEventStream {
+  return Symbol.asyncIterator in value;
+}
+
+// 消费事件流
+export async function consumeResponseStream(
+  stream: ResponseEventStream,
+  onDelta: (delta: ResponseDelta) => void,
+): Promise<ModelResponse> {
+  for await (const event of stream) {
+    if (event.type === "response.reasoning_text.delta") {
+      onDelta({ kind: "reasoning", text: event.delta });
+      continue;
+    }
+    if (event.type === "response.output_text.delta") {
+      onDelta({ kind: "answer", text: event.delta });
+      continue;
+    }
+    if (
+      event.type === "response.completed" ||
+      event.type === "response.incomplete" ||
+      event.type === "response.failed"
+    ) {
+      return event.response;
+    }
+  }
+  throw new Error("流式响应结束时未收到终止事件");
+}
 
 // Agent 只保存推理、最终消息和工具调用三种模型输出。
 export function agentOutputItems(items: ResponseOutputItem[]): AgentItem[] {

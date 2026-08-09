@@ -7,7 +7,10 @@ import OpenAI from "openai";
 import { loadRuntime } from "./config.ts";
 import type { FileChange } from "./file_change_tracker.ts";
 import { ReActAgent } from "./runtime/agent.ts";
-import type { ResponsesClient } from "./runtime/responses.ts";
+import type {
+  ResponseDelta,
+  ResponsesClient,
+} from "./runtime/responses.ts";
 import type { TokenUsage } from "./runtime/usage.ts";
 import { SessionStore } from "./session/store.ts";
 import {
@@ -153,14 +156,57 @@ export function formatTokenUsage(usage: TokenUsage): string {
   ].join("\n");
 }
 
+export function createCliStreamRenderer(
+  write: (text: string) => void,
+  colorsEnabled = false,
+) {
+  let activeKind: ResponseDelta["kind"] | undefined;
+  let wroteAnswer = false;
+
+  const finishLine = (): void => {
+    if (activeKind === undefined) return;
+    write("\n");
+    activeKind = undefined;
+  };
+
+  return {
+    writeDelta(delta: ResponseDelta): void {
+      if (!delta.text) return;
+      if (activeKind !== delta.kind) {
+        finishLine();
+        const prefix = delta.kind === "reasoning" ? "Thinking: " : "Agent: ";
+        const tone = delta.kind === "reasoning" ? "muted" : "success";
+        write(styleText(`${prefix}${delta.text}`, tone, colorsEnabled));
+        activeKind = delta.kind;
+      } else {
+        const tone = delta.kind === "reasoning" ? "muted" : "success";
+        write(styleText(delta.text, tone, colorsEnabled));
+      }
+      if (delta.kind === "answer") wroteAnswer = true;
+    },
+    finishLine,
+    get answerWritten(): boolean {
+      return wroteAnswer;
+    },
+  };
+}
+
 export function formatTurnOutput(
   answer: string,
   changes: FileChange[],
   colorsEnabled = false,
 ): string {
-  const sections = [
-    styleText(`Agent: ${answer}`, "success", colorsEnabled),
-  ];
+  const sections = [styleText(`Agent: ${answer}`, "success", colorsEnabled)];
+  const fileChanges = formatFileChanges(changes, colorsEnabled);
+  if (fileChanges) sections.push(fileChanges);
+  return sections.join("\n\n");
+}
+
+export function formatFileChanges(
+  changes: FileChange[],
+  colorsEnabled = false,
+): string {
+  const sections: string[] = [];
   for (const change of changes) {
     const lines = [
       styleText(`[Changes] ${change.path}`, "heading", colorsEnabled),
@@ -284,15 +330,30 @@ export async function runCli(): Promise<void> {
       const userInput = (await terminal.question("You: ")).trim();
       if (["exit", "quit"].includes(userInput.toLocaleLowerCase())) break;
       if (!userInput) continue;
+      const streamRenderer = createCliStreamRenderer((text) => {
+        stdout.write(text);
+      }, colorsEnabled);
       try {
         // 调用 Agent 处理本轮对话，最多 maxSteps 步
-        const answer = await agent.runTurn(userInput, runtimeOutput);
-        console.log(formatTurnOutput(
-          answer,
+        const answer = await agent.runTurn(
+          userInput,
+          (line) => {
+            streamRenderer.finishLine();
+            runtimeOutput(line);
+          },
+          streamRenderer.writeDelta,
+        );
+        if (!streamRenderer.answerWritten && answer) {
+          streamRenderer.writeDelta({ kind: "answer", text: answer });
+        }
+        streamRenderer.finishLine();
+        const fileChanges = formatFileChanges(
           agent.lastTurnFileChanges,
           colorsEnabled,
-        ));
+        );
+        if (fileChanges) console.log(`\n${fileChanges}`);
       } catch (error) {
+        streamRenderer.finishLine();
         const message = `Agent 错误: ${error instanceof Error ? error.message : error}`;
         console.log(styleText(message, "error", colorsEnabled));
       }

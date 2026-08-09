@@ -2,10 +2,13 @@ import { ToolRegistry } from "../tools/registry.ts";
 import type { FileChange } from "../file_change_tracker.ts";
 import {
   agentOutputItems,
+  consumeResponseStream,
+  isResponseEventStream,
   responseText,
   sanitizeUnicode,
   type AgentItem,
   type FunctionCallOutputItem,
+  type ResponseDelta,
   type ResponseFunctionToolCall,
   type ResponsesClient,
 } from "./responses.ts";
@@ -132,6 +135,9 @@ export class ReActAgent {
         max_output_tokens: COMPACTION_MAX_TOKENS,
       }) as Record<string, unknown>,
     );
+    if (isResponseEventStream(response)) {
+      throw new Error("Compact 请求意外返回了流式响应");
+    }
     accumulateTokenUsage(this.usage, response.usage);
     const summary = (response.output_text || responseText(response.output)).trim();
     if (!summary) throw new Error("模型返回的摘要为空");
@@ -141,6 +147,7 @@ export class ReActAgent {
   async runTurn(
     userInput: string,
     output: (line: string) => void = console.log,
+    onDelta: (delta: ResponseDelta) => void = () => undefined,
   ): Promise<string> {
     this.lastFileChanges = [];
     this.tools.beginTurn(); // 刷新本轮的修改list
@@ -172,6 +179,7 @@ export class ReActAgent {
           model: this.model,
           instructions: this.systemPrompt,
           input: this.items,
+          stream: true,
         };
         if (this.tools.specs.length > 0) {
           Object.assign(request, {
@@ -179,9 +187,13 @@ export class ReActAgent {
             tool_choice: "auto", // 模型自由选择
           });
         }
-        const response = await this.client.responses.create(
+        const responseStream = await this.client.responses.create(
           sanitizeUnicode(request) as Record<string, unknown>,
         );
+        if (!isResponseEventStream(responseStream)) {
+          throw new Error("流式请求未返回事件流");
+        }
+        const response = await consumeResponseStream(responseStream, onDelta);
         if (response.status === "failed") {
           throw new Error(response.error?.message ?? "模型响应失败");
         }

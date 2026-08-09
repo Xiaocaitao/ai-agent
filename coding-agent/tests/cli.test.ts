@@ -508,6 +508,50 @@ test("CLI 格式化退出时的 Token 汇总", () => {
   );
 });
 
+test("CLI 按流事件顺序显示 Thinking 和 Agent", () => {
+  const createCliStreamRenderer = (cliModule as Record<string, unknown>)
+    .createCliStreamRenderer;
+  assert.equal(typeof createCliStreamRenderer, "function");
+  if (typeof createCliStreamRenderer !== "function") return;
+
+  const chunks: string[] = [];
+  const renderer = createCliStreamRenderer(
+    (text: string) => chunks.push(text),
+    false,
+  ) as {
+    writeDelta(delta: { kind: "reasoning" | "answer"; text: string }): void;
+    finishLine(): void;
+    readonly answerWritten: boolean;
+  };
+
+  renderer.writeDelta({ kind: "reasoning", text: "先" });
+  renderer.writeDelta({ kind: "reasoning", text: "分析" });
+  renderer.writeDelta({ kind: "answer", text: "完成" });
+  renderer.finishLine();
+
+  assert.equal(chunks.join(""), "Thinking: 先分析\nAgent: 完成\n");
+  assert.equal(renderer.answerWritten, true);
+});
+
+test("CLI 流式回答完成后只格式化文件 Diff", () => {
+  const formatFileChanges = (cliModule as Record<string, unknown>)
+    .formatFileChanges;
+  assert.equal(typeof formatFileChanges, "function");
+  if (typeof formatFileChanges !== "function") return;
+
+  assert.equal(
+    formatFileChanges([{
+      path: "example.ts",
+      diff: "--- a/example.ts\n+++ b/example.ts\n-old\n+new\n",
+      truncated: false,
+    }]),
+    [
+      "[Changes] example.ts",
+      "--- a/example.ts\n+++ b/example.ts\n-old\n+new",
+    ].join("\n"),
+  );
+});
+
 test("CLI 在最终回答后展示整轮文件 Diff", () => {
   const formatTurnOutput = (cliModule as Record<string, unknown>)
     .formatTurnOutput;

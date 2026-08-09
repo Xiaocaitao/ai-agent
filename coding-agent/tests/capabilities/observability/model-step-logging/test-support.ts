@@ -1,4 +1,5 @@
 import type { ToolHandler } from "../../../../tools/registry.ts";
+import { responseForRequest } from "../../../support/responses.ts";
 
 export function toolCall(text: string, id: string) {
   return {
@@ -19,9 +20,9 @@ export function choice(messageValue: ReturnType<typeof message>, finishReason: s
 export function fakeClient(...choices: ReturnType<typeof choice>[]) {
   return {
     responses: {
-      create: async () => {
+      create: async (request: unknown) => {
         const current = choices.shift()!;
-        return {
+        return responseForRequest(request, {
           output: [
             ...(current.message.tool_calls ?? []).map((call) => ({
               type: "function_call" as const,
@@ -44,7 +45,7 @@ export function fakeClient(...choices: ReturnType<typeof choice>[]) {
           ],
           output_text: current.message.content ?? "",
           status: "completed" as const,
-        };
+        });
       },
     },
   };
