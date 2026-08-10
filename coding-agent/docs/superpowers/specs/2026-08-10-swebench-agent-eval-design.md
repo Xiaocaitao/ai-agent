@@ -63,9 +63,9 @@ Agent 仍然是被测对象。Docker 不运行另一个 Agent，只提供 SWE-be
 ## 单任务流程
 
 1. 从固定数据集加载 task。
-2. 准备对应的 SWE-bench Docker image/container，并 checkout `base_commit`。
-3. 建立只包含该 task workspace 的显式 bind mount。
-4. 把 `problem_statement` 传给当前 Agent，不暴露 gold patch 或隐藏测试。
+2. 准备对应的 SWE-bench Docker image/container，并 checkout `base_commit` 基线commit。
+3. 建立只包含该 task workspace 的显式 bind mount 挂载。
+4. 把 `problem_statement` 传给当前 Agent，不暴露 gold patch （官方最终修复方案）或隐藏测试。
 5. Agent 使用现有 ReAct、上下文管理和工具权限完成修改。
 6. `read_file`、`search_files`、`edit_file`、`write_file` 只允许访问 task workspace；`run_command` 在 Docker 容器内执行。
 7. Agent 结束、超时或异常后收集 git diff、工具轨迹和资源指标。
@@ -82,17 +82,17 @@ Agent 仍然是被测对象。Docker 不运行另一个 Agent，只提供 SWE-be
 
 结果不压缩为单一 pass/fail，至少保留：
 
-- `correctness`
-- `instruction_following`
-- `repository_navigation`
-- `tool_use`
-- `verification`
-- `long_horizon`
-- `recovery`
-- `safety`
-- `scope_changes`
-- `token_usage`
-- `duration`
+- `correctness` 是否修好
+- `instruction_following` 是否遵守要求
+- `repository_navigation` 是否找对代码位置
+- `tool_use` 工具使用是否合理
+- `verification` 是否跑验证
+- `long_horizon` 长任务是否可持续干活
+- `recovery` 出错后是否能恢复
+- `safety` 是否遵守安全边界
+- `scope_changes` 修改范围是否合理
+- `token_usage` token消耗
+- `duration` 完成任务用了多久
 
 文件修改范围作为诊断指标，不使用 gold patch 的文件列表作为唯一允许列表；真实任务可能存在多个正确实现。安全越界、测试篡改和宿主机写入仍然是独立失败条件。
 

@@ -26,40 +26,40 @@
 
 **Files:**
 - Create: `scripts/swebench/README.md`
-- Create: `scripts/swebench/preflight.py`
+- Create: `eval/swebench/preflight.ts`
 - Create: `tests/swebench/preflight.test.ts`
 - Modify: `package.json`
 
 **Interfaces:**
-- `preflight.py` 接收 `--instance-id <id>` 和 `--json`，检查 Python `swebench` 包、Docker daemon、目标 task metadata 和目标镜像能力；成功输出包含 `instance_id`, `docker_server`, `architecture`, `image_status` 的 JSON。
+- `preflight.ts` 接收 `--python <absolute-path>` 和 `--json`，检查 Python `swebench` 包和 Docker daemon；成功输出包含 `python`, `swebench_version`, `docker_server`, `architecture` 的 JSON。
 - `package.json` 增加 `eval:swebench:preflight`，只调用预检，不调用模型、不修改仓库。
 
-- [ ] **Step 1: 写预检失败测试**
+- [x] **Step 1: 写预检失败测试**
 
-测试 `preflight.test.ts` 通过 fake command runner 验证：Docker daemon 不可用时返回确定的 `docker_unavailable`；Python 包缺失时返回 `swebench_package_missing`；成功时返回结构化 metadata。
+测试 `preflight.test.ts` 通过注入的 command runner 验证：Docker daemon 不可用时返回确定的 `docker_unavailable`；Python 包缺失时返回 `swebench_package_missing`；成功时返回结构化 metadata。
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `node --experimental-strip-types --test tests/swebench/preflight.test.ts`
 
 Expected: FAIL，因为预检模块和 JSON 状态尚未定义。
 
-- [ ] **Step 3: 建立最小预检实现**
+- [x] **Step 3: 建立最小预检实现**
 
-`preflight.py` 只执行明确的只读检查：`python -c "import swebench"`、`docker version`、目标镜像 inspect；不得调用模型、启动长期容器或拉取隐藏测试。所有失败映射到固定状态和非零退出码。
+`preflight.ts` 只执行明确的只读检查：`<python> -c "import swebench; print(swebench.__version__)"`、`docker version --format {{.Server.Version}}` 和 `docker info --format {{.Architecture}}`；不得调用模型、启动长期容器或拉取隐藏测试。所有失败映射到固定状态和非零退出码。
 
-- [ ] **Step 4: 运行测试和本机预检**
+- [x] **Step 4: 运行测试和本机预检**
 
 Run: `node --experimental-strip-types --test tests/swebench/preflight.test.ts`
 
-Run: `python3 scripts/swebench/preflight.py --instance-id sympy__sympy-20590 --json`
+Run: `node --experimental-strip-types eval/swebench/preflight.ts --python /absolute/path/to/python --json`
 
-Expected: 单元测试通过；本机输出 Docker server 版本、架构和目标 task 的环境状态。若 Python 包或镜像缺失，只报告缺失，不伪造成功。
+Expected: 单元测试通过；本机输出 Docker server 版本、架构和 SWE-bench 包版本。若 Python 包或 Docker daemon 缺失，只报告缺失，不伪造成功。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
-git add scripts/swebench package.json tests/swebench/preflight.test.ts
+git add eval/swebench/preflight.ts package.json tests/swebench/preflight.test.ts scripts/swebench/README.md
 git commit -m "feat: add SWE-bench environment preflight"
 ```
 
