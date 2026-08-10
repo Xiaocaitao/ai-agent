@@ -11,7 +11,7 @@ export type PreparedCommand = {
   sandboxed: boolean;
 };
 
-type CommandData = {
+export type CommandData = {
   stdout: string;
   stderr: string;
   exit_code: number | null;
@@ -20,6 +20,23 @@ type CommandData = {
   sandboxed: boolean;
   sandbox_denied?: true;
 };
+
+export type CommandExecutor = (
+  args: string[],
+  stdin: string | null,
+  timeout: number,
+  cwd: string,
+) => Promise<CommandData>;
+
+let configuredExecutor: CommandExecutor | undefined;
+
+export function configureCommandExecutor(executor: CommandExecutor): void {
+  configuredExecutor = executor;
+}
+
+export function resetCommandExecutor(): void {
+  configuredExecutor = undefined;
+}
 
 function isSandboxDenial(stderr: string): boolean {
   return /Operation not permitted|sandbox_apply|Sandbox: .*deny/i.test(stderr);
@@ -81,6 +98,14 @@ export async function executePreparedCommand(
   }
 }
 
+function interpretCommandResult(result: CommandData, timeout: number) {
+  if (result.timed_out)
+    return failure(`命令执行超时: ${timeout} 秒`, result);
+  if (result.exit_code !== 0)
+    return failure(`命令退出码: ${result.exit_code}`, result);
+  return success(result);
+}
+
 export async function runCommand(
   args: unknown,
   stdin: unknown = null,
@@ -110,6 +135,15 @@ export async function runCommand(
 
   try {
     const [workdir] = await workspacePath(cwd);
+    if (configuredExecutor !== undefined) {
+      const result = await configuredExecutor(
+        args as string[],
+        stdin as string | null,
+        timeout,
+        workdir,
+      );
+      return interpretCommandResult(result, timeout);
+    }
     const command = buildSandboxedCommand(args as string[], workdir);
     return executePreparedCommand(
       command,

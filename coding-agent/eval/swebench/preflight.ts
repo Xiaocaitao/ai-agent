@@ -1,7 +1,12 @@
 import { spawn } from "node:child_process";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-
+/*
+  预先检查
+    1.检查 Python 是否能加载 SWE-bench
+    2.检查 Docker daemon 是否可用
+    3.检查 Docker 架构
+*/
 export type PreflightCommandResult = {
   exitCode: number | null;
   stdout: string;
