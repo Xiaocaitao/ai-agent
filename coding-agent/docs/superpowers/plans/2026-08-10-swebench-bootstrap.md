@@ -4,17 +4,17 @@
 
 **Goal:** 先在本机用 Docker 验证一个固定的 SWE-bench 真实任务，再把当前 Coding Agent 接入同一任务环境，为后续 20 题回归集建立可复现基础。
 
-**Architecture:** 宿主机运行当前 Agent 和模型 API 客户端；每个 SWE-bench task 使用独立 Docker 容器承载仓库、依赖和测试。Agent 的文件工具操作临时 workspace，`run_command` 通过可替换的 `CommandExecutor` 在 Docker 容器内执行。先完成单任务闭环，再扩展任务选择、报告和 holdout。
+**Architecture:** 宿主机只运行 Orchestrator、容器生命周期管理和模型 API 代理；每个 SWE-bench task 使用独立 Docker Worker 容器承载当前 Agent、仓库、依赖和测试。Agent 的文件工具与 `run_command` 全部在 Worker 容器内执行，宿主机不承载 task workspace。先完成单任务闭环，再扩展任务选择、报告和 holdout。
 
 **Tech Stack:** TypeScript/Node.js 现有 Runtime、Docker CLI/Engine、Python `swebench` 官方 Harness、SWE-bench 固定 task metadata、Node test runner。
 
 ## Global Constraints
 
-- 评估主体是当前 Coding Agent + 固定模型；Docker 只提供真实项目环境、测试和隔离。
+- 评估主体是当前 Coding Agent + 固定模型；Docker Worker 同时提供 Agent 运行环境、真实项目依赖、测试和隔离。
 - 第一阶段只验证一个 task；20 题选择和完整报告放到后续任务。
-- Docker 容器只挂载当前 task 的临时 workspace，不挂载项目根目录、用户主目录、Docker socket 或密钥目录。
+- Docker Worker 只挂载当前 task 的 workspace 和显式结果输出目录，不挂载项目根目录、用户主目录、Docker socket 或密钥目录。
 - Agent 只接收 `problem_statement`，不接收 gold patch、隐藏测试或参考提交。
-- 宿主机 API Key 不写入 task 容器；容器网络默认关闭，模型请求由宿主机发起。
+- 宿主机 API Key 不写入 task 容器；模型请求通过宿主机 API 代理转发。除代理通道外，容器网络默认关闭。
 - SWE-bench 使用 Docker Linux 环境；不得尝试安装或运行 macOS Docker image。
 - 使用 Node `--experimental-strip-types` 运行 TypeScript；测试使用 `node --test`。
 - 不删除旧本地 fixture Eval 文件；新入口稳定前不改变旧测试的默认语义。
@@ -120,7 +120,7 @@ git commit -m "test: validate one SWE-bench gold task"
 - [ ] **Step 4: 运行 `npm test -- tests/tools/command_executor.test.ts` 和既有 tools 测试**
 - [ ] **Step 5: 提交 `feat: abstract command execution backend`**
 
-### Task 4: 实现 DockerSandbox 和单任务容器生命周期
+### Task 4: 实现 Docker Worker 和单任务容器生命周期
 
 **Files:**
 - Create: `eval/swebench/docker_sandbox.ts`
@@ -128,18 +128,18 @@ git commit -m "test: validate one SWE-bench gold task"
 - Modify: `eval/swebench/types.ts`
 
 **Interfaces:**
-- `DockerSandbox.start(task): Promise<{containerId: string; workspace: string; containerWorkspace: string}>`
-- `DockerSandbox.run(args, cwd, timeout): Promise<CommandExecutionResult>`
+- `DockerSandbox.start(task): Promise<{containerId: string; containerWorkspace: string; resultDirectory: string}>`
+- `DockerSandbox.runWorker(input): Promise<WorkerResult>`
 - `DockerSandbox.stop(): Promise<void>`
-- 所有 Docker 命令通过 `runProcess` 执行，使用明确的 argv，不使用 shell 拼接；容器命令默认 `--network none`，只显式 bind mount task workspace。
+- 所有 Docker 命令通过 `runProcess` 执行，使用明确的 argv，不使用 shell 拼接；容器命令默认 `--network none`，只显式 bind mount task workspace 和结果目录。Worker 入口在容器内启动当前 Agent，文件工具和命令工具不再回到宿主机。
 
 - [ ] **Step 1: 写容器参数和路径隔离测试**
 - [ ] **Step 2: 运行 focused test 确认失败**
-- [ ] **Step 3: 实现 start/run/stop，使用固定 task workspace、超时和进程组终止**
+- [ ] **Step 3: 实现 start/runWorker/stop，使用固定 task workspace、超时和进程组终止；通过受控的宿主机模型代理转发请求**
 - [ ] **Step 4: 运行 `docker run --rm` 级别集成测试，确认容器能读写 workspace、不能读取未挂载宿主路径、命令超时可清理**
 - [ ] **Step 5: 提交 `feat: add Docker sandbox for SWE-bench tasks`**
 
-### Task 5: 接入 Agent 单任务执行
+### Task 5: 接入 Docker Worker 中的 Agent 单任务执行
 
 **Files:**
 - Create: `eval/swebench/task_loader.ts`
@@ -150,11 +150,11 @@ git commit -m "test: validate one SWE-bench gold task"
 **Interfaces:**
 - `loadSWEbenchTask(path, id): Promise<SWEbenchTask>`
 - `runSWEbenchTask(task, options): Promise<SWEbenchRunResult>`
-- Agent 继续使用现有 `ReActAgent`、runtime prompt、模型配置和工具注册表；唯一变化是把当前 command executor 配置为 DockerSandbox。
+- Agent 继续使用现有 `ReActAgent`、runtime prompt、模型配置和工具注册表；启动位置改为 Worker 容器内，task prompt 和模型请求代理配置由 Orchestrator 注入。
 
 - [ ] **Step 1: 写 fake model/fake Docker 的 Agent runner 测试**
 - [ ] **Step 2: 运行 focused test 确认失败**
-- [ ] **Step 3: 实现 task prompt 注入、workspace 配置、工具轨迹和 Token 采集**
+- [ ] **Step 3: 实现 Worker 内 task prompt 注入、workspace 配置、工具轨迹和 Token 采集；确保宿主机只接收结构化结果**
 - [ ] **Step 4: 用单个真实 task 运行当前 Agent，确认 Agent 修改的是 task workspace 而非主仓库**
 - [ ] **Step 5: 提交 `feat: run coding agent on one SWE-bench task`**
 

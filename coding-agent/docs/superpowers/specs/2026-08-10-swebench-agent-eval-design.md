@@ -46,28 +46,26 @@ dataset_revision
 ## 运行架构
 
 ```text
-宿主机
-  Agent Worker + 模型 API 客户端 + 文件工具
+宿主机 Orchestrator
+  任务调度、容器生命周期、模型 API 代理、结果/指标收集
        │
-       ├── 文件读写：临时 workspace，应用层路径校验
-       └── run_command：DockerSandbox 后端
-                         │
-                         └── 单 task Docker 容器
-                               仓库、依赖、测试和工作目录
+       └── 单 task Worker Docker 容器
+             当前 Agent Worker + ReAct + 全部工具
+             仓库、依赖、测试和 task workspace
 ```
 
-Agent 仍然是被测对象。Docker 不运行另一个 Agent，只提供 SWE-bench 的项目依赖、测试环境和隔离边界。模型 API 请求由宿主机发起；任务容器不接收 API Key，不挂载 Docker socket，不挂载宿主机项目根目录。
+Agent 仍然是被测对象，但 Worker 本身运行在 task 容器内。这样文件工具和命令工具拥有同一个工作目录与安全边界，宿主机只负责调度和收集结果。模型 API 通过宿主机代理转发；任务容器不接收 API Key，不挂载 Docker socket，不挂载宿主机项目根目录。宿主机只提供显式的结果输出目录（或使用 `docker cp` 收集 patch 和日志）。
 
-现有 macOS Seatbelt 后端不删除，但不作为 SWE-bench 主路径。命令执行抽象为可替换的 sandbox backend：本地旧流程使用 macOS Seatbelt，SWE-bench 使用 DockerSandbox。
+现有 macOS Seatbelt 后端不删除，但不作为 SWE-bench 主路径。SWE-bench 的 DockerSandbox 负责启动完整 Worker 容器；容器内的 Agent 直接执行文件读写和命令，不能访问宿主机文件系统。macOS Seatbelt 仅保留给本地旧流程和单元测试。
 
 ## 单任务流程
 
 1. 从固定数据集加载 task。
 2. 准备对应的 SWE-bench Docker image/container，并 checkout `base_commit` 基线commit。
-3. 建立只包含该 task workspace 的显式 bind mount 挂载。
+3. 构建/启动包含 SWE-bench 依赖和当前 Agent Worker 的 task 容器；只提供显式的 task workspace 和结果输出目录。
 4. 把 `problem_statement` 传给当前 Agent，不暴露 gold patch （官方最终修复方案）或隐藏测试。
 5. Agent 使用现有 ReAct、上下文管理和工具权限完成修改。
-6. `read_file`、`search_files`、`edit_file`、`write_file` 只允许访问 task workspace；`run_command` 在 Docker 容器内执行。
+6. `read_file`、`search_files`、`edit_file`、`write_file`、`run_command` 全部在 Docker Worker 容器内执行，并只允许访问 task workspace。
 7. Agent 结束、超时或异常后收集 git diff、工具轨迹和资源指标。
 8. 在同一个固定环境中运行 `FAIL_TO_PASS` 和 `PASS_TO_PASS` 测试。
 9. 生成任务级结果，并清理容器；报告保留可复查的 task workspace 或 patch 摘要，不保留密钥和完整敏感输出。
