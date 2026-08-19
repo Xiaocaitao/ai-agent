@@ -12,6 +12,8 @@ import {
   type CommandData,
 } from "../../tools/run_command.ts";
 
+const macOsOnly = { skip: process.platform !== "darwin" };
+
 async function workspace(): Promise<string> {
   return mkdtemp(path.join(tmpdir(), "coding-agent-command-executor-test-"));
 }
@@ -79,7 +81,7 @@ test("配置的命令执行后端返回超时结果时保留 sandbox metadata", 
   }
 });
 
-test("未配置执行后端时保留现有 macOS Seatbelt 路径", async () => {
+test("未配置执行后端时保留现有 macOS Seatbelt 路径", macOsOnly, async () => {
   resetCommandExecutor();
   const root = await workspace();
   configureWorkspace(root);
