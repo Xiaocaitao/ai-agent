@@ -1,0 +1,20 @@
+# syntax=docker/dockerfile:1.7
+ARG SWE_BENCH_BASE_IMAGE=node:22-bookworm-slim
+ARG SWE_BENCH_PLATFORM=linux/amd64
+
+# 使用已构建的 Coding Agent Worker 作为基础：它保留 SWE-bench Python 环境并已有 Linux Node 运行时。
+FROM --platform=${SWE_BENCH_PLATFORM} ${SWE_BENCH_BASE_IMAGE}
+
+WORKDIR /opt/pi
+
+# pi 是 docker buildx 的 named context；不复制其 .pi、.git、node_modules 或任何本机凭据。
+COPY --from=pi package.json package-lock.json .npmrc ./
+COPY --from=pi tsconfig.json tsconfig.base.json ./
+COPY --from=pi packages ./packages
+COPY --from=pi pi-test.sh ./pi-test.sh
+
+RUN npm ci --ignore-scripts --no-audit --no-fund \
+  && chmod 0755 /opt/pi/pi-test.sh \
+  && mkdir -p /testbed /results
+
+CMD ["sleep", "infinity"]

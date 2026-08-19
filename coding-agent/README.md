@@ -10,6 +10,14 @@
 
 ## 功能更新日志
 
+### v1.0.0 · 2026-08-19
+
+- 增加容器化 SWE-bench 评测链路：按任务准备隔离 workspace，启动 Worker 执行 Agent，使用独立 Grader 容器运行官方测试，并收集 patch、日志和结果。
+- 增加 DeepSeek provider 代理、Worker 生命周期管理、任务批量执行、官方评分适配和 100 步上限校验；Worker 内不暴露宿主机密钥或 gold patch。
+- 增加统一评测指标：正确性、Token、工具调用、工具失败、验证命令、模型步骤、上下文压缩和 Agent 耗时，并支持 Pi baseline 对比。
+- 增加评测控制台：支持一键发起评测、实时运行事件、历史 run、每题 Session/Agent/Grader 轨迹，以及单题分析和整轮改进报告的流式 Markdown 展示。
+- 旧 Coding Agent 结果可从每题最新 `session.sqlite` 动态补充行为指标；指标采集只统计最新 session，并修复 `error: null` 被误计为工具失败的问题。
+
 ### 2026-08-09
 
 - 模型请求迁移到 Responses API，使用原生 message、reasoning、function_call 和 function_call_output items 传递与持久化上下文。

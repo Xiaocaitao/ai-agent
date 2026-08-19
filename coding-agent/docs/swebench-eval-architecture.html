@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SWE-bench 评测系统：工作原理</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --page: #08111f;
+      --panel: #0e1b2e;
+      --panel-soft: #12243b;
+      --line: #29425f;
+      --text: #ebf4ff;
+      --muted: #a4b5cc;
+      --cyan: #62d5ff;
+      --mint: #72e8bd;
+      --yellow: #ffd375;
+      --rose: #ff9eae;
+      --focus: #fff3bd;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--text);
+      background: radial-gradient(circle at 20% -20%, #153a5c 0, transparent 34rem), var(--page);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", sans-serif;
+      line-height: 1.6;
+    }
+    main { max-width: 1180px; margin: 0 auto; padding: 44px 24px 72px; }
+    h1, h2, h3, p { margin-top: 0; }
+    h1 { font-size: clamp(2rem, 4vw, 3.5rem); line-height: 1.1; letter-spacing: -.04em; margin-bottom: 16px; }
+    h2 { font-size: 1.45rem; letter-spacing: -.02em; margin-bottom: 8px; }
+    h3 { font-size: 1rem; margin-bottom: 6px; }
+    .eyebrow { color: var(--mint); font-size: .8rem; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
+    .lead { max-width: 750px; color: var(--muted); font-size: 1.08rem; }
+    .pill-row, .legend { display: flex; flex-wrap: wrap; gap: 8px; }
+    .pill { border: 1px solid var(--line); border-radius: 99px; padding: 4px 10px; color: var(--muted); font-size: .8rem; }
+    .card { background: linear-gradient(145deg, rgba(20, 39, 64, .95), rgba(10, 24, 41, .95)); border: 1px solid var(--line); border-radius: 18px; padding: 22px; }
+    .flow-layout { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(260px, .8fr); gap: 18px; align-items: stretch; }
+    .diagram-card { padding: 16px; overflow: hidden; }
+    .diagram-label { color: var(--muted); font-size: .84rem; margin: 3px 8px 12px; }
+    svg { display: block; width: 100%; height: auto; }
+    .zone { fill: rgba(16, 37, 61, .64); stroke: #375a7b; stroke-dasharray: 7 7; stroke-width: 1.4; }
+    .zone-title { fill: #9fc2e3; font-size: 14px; font-weight: 700; letter-spacing: .05em; }
+    .flow { fill: none; stroke: #73a8d1; stroke-width: 2.4; marker-end: url(#arrow); }
+    .flow-dual { fill: none; stroke: var(--mint); stroke-width: 2.4; marker-start: url(#arrow-mint); marker-end: url(#arrow-mint); }
+    .flow-label { fill: #b8cee6; font-size: 12px; font-weight: 600; }
+    .node { cursor: pointer; outline: none; }
+    .node rect { stroke: #4e7699; stroke-width: 1.5; transition: fill .18s, stroke .18s, transform .18s; transform-box: fill-box; transform-origin: center; }
+    .node:hover rect, .node:focus rect { fill: #1d4366; stroke: var(--focus); transform: scale(1.025); }
+    .node.selected rect { fill: #1d4c68; stroke: var(--mint); stroke-width: 2.3; }
+    .node-title { fill: #f4f9ff; font-size: 15px; font-weight: 760; text-anchor: middle; }
+    .node-subtitle { fill: #b7cde4; font-size: 11px; text-anchor: middle; }
+    .node-mint rect { fill: #143c43; stroke: #58c8ac; }
+    .node-yellow rect { fill: #46361d; stroke: #e2b85f; }
+    .node-rose rect { fill: #432333; stroke: #cc7185; }
+    .detail-card { display: flex; flex-direction: column; }
+    .detail-kicker { color: var(--cyan); font-size: .78rem; font-weight: 700; letter-spacing: .11em; text-transform: uppercase; }
+    .detail-card h2 { margin-top: 4px; }
+    .detail-card p { color: var(--muted); }
+    .io-list { margin: 0 0 14px; padding: 0; list-style: none; }
+    .io-list li { border-top: 1px solid rgba(79, 116, 150, .38); padding: 9px 0; font-size: .9rem; }
+    .io-list strong { color: #dbeeff; display: inline-block; min-width: 52px; }
+    button {
+      border: 1px solid #4c907f;
+      background: #143c3a;
+      color: #9df2d3;
+      border-radius: 9px;
+      padding: 9px 12px;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    button:hover, button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; background: #1b514d; }
+    .implementation { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 14px; }
+    .implementation[hidden] { display: none; }
+    .implementation h3 { color: var(--yellow); }
+    .implementation ul { margin: 8px 0 0; padding-left: 20px; color: var(--muted); font-size: .89rem; }
+    code { color: #b8e8ff; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .86em; }
+    .section { margin-top: 30px; }
+    .section-note { color: var(--muted); margin-bottom: 14px; }
+    .concept-grid, .boundary-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+    .concept h3 { color: var(--cyan); }
+    .concept p, .boundary p { color: var(--muted); margin-bottom: 0; font-size: .93rem; }
+    .boundary.visible { border-top: 3px solid var(--mint); }
+    .boundary.hidden-boundary { border-top: 3px solid var(--rose); }
+    .boundary.host { border-top: 3px solid var(--yellow); }
+    .boundary h3 { margin-bottom: 2px; }
+    .timeline { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; }
+    .step { position: relative; padding: 14px 10px 12px; min-height: 160px; }
+    .step:not(:last-child)::after { content: "→"; position: absolute; right: -13px; top: 50%; color: var(--cyan); z-index: 2; font-size: 1.3rem; }
+    .step-number { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%; background: #1b3958; color: var(--cyan); font-weight: 800; font-size: .82rem; }
+    .step p { color: var(--muted); font-size: .84rem; margin-bottom: 0; }
+    .truth { border-left: 3px solid var(--mint); padding: 10px 14px; color: var(--muted); background: rgba(20, 60, 58, .4); }
+    .source-list { color: var(--muted); font-size: .86rem; padding-left: 18px; }
+    .source-list code { color: #b5d5f2; }
+    @media (max-width: 900px) {
+      .flow-layout { grid-template-columns: 1fr; }
+      .timeline { grid-template-columns: repeat(3, 1fr); }
+      .step:nth-child(3)::after { display: none; }
+    }
+    @media (max-width: 620px) {
+      main { padding: 28px 14px 48px; }
+      .concept-grid, .boundary-grid, .timeline { grid-template-columns: 1fr; }
+      .step { min-height: auto; }
+      .step:not(:last-child)::after { content: "↓"; right: 50%; top: auto; bottom: -18px; }
+      .diagram-card { padding: 6px; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div class="eyebrow">Coding Agent · SWE-bench</div>
+      <h1>一次评测，怎样从“题目”变成“分数”？</h1>
+      <p class="lead">把它理解为一条受控的流水线：Agent 在隔离容器里尝试修 bug，模型能力与密钥留在宿主机，另一套独立测试负责判分，最后把过程和结果沉淀下来。</p>
+      <div class="pill-row" aria-label="阅读提示">
+        <span class="pill">先看主图</span>
+        <span class="pill">点击节点看职责</span>
+        <span class="pill">需要时再展开技术细节</span>
+      </div>
+    </header>
+
+    <section class="section" aria-labelledby="flow-title">
+      <h2 id="flow-title">顶层数据流</h2>
+      <p class="section-note">首屏只保留六个角色与五条关键流向。绿色双向线表示 Agent 每一步与模型的问答；其余箭头都沿着一次任务向前推进。</p>
+      <div class="flow-layout">
+        <div class="card diagram-card">
+          <div class="diagram-label">点击任意方块，右侧会解释它此刻接收什么、做什么、产出什么。</div>
+          <svg viewBox="0 0 920 510" role="img" aria-labelledby="svg-title svg-desc">
+            <title id="svg-title">SWE-bench 单题评测的顶层数据流</title>
+            <desc id="svg-desc">任务清单经宿主机调度器进入 Worker Docker。Worker 与宿主机模型代理双向通信，修改后的工作区进入 Grader Docker，最终结果写回宿主机结果目录。</desc>
+            <defs>
+              <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#73a8d1"/></marker>
+              <marker id="arrow-mint" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#72e8bd"/></marker>
+            </defs>
+            <rect class="zone" x="164" y="32" width="718" height="430" rx="18"/>
+            <text class="zone-title" x="187" y="59">宿主机（你的 Mac）</text>
+            <rect class="zone" x="385" y="86" width="190" height="176" rx="14"/>
+            <text class="zone-title" x="402" y="111">WORKER DOCKER</text>
+            <rect class="zone" x="628" y="86" width="190" height="176" rx="14"/>
+            <text class="zone-title" x="645" y="111">GRADER DOCKER</text>
+
+            <path class="flow" d="M 143 210 H 203"/>
+            <text class="flow-label" x="148" y="192">公开题目</text>
+            <path class="flow" d="M 343 210 H 406"/>
+            <text class="flow-label" x="349" y="192">任务 + 工作区</text>
+            <path class="flow-dual" d="M 480 267 V 344"/>
+            <text class="flow-label" x="493" y="312" fill="#72e8bd">模型问答</text>
+            <path class="flow" d="M 575 210 H 651"/>
+            <text class="flow-label" x="587" y="192">修改后工作区</text>
+            <path class="flow" d="M 723 278 V 371 H 772"/>
+            <text class="flow-label" x="739" y="352">评分结果</text>
+
+            <g class="node node-yellow" data-node="task" tabindex="0" role="button" aria-label="任务清单，点击查看详情">
+              <rect x="20" y="164" width="123" height="92" rx="12"/>
+              <text class="node-title" x="81" y="203">任务清单</text>
+              <text class="node-subtitle" x="81" y="224">SWE-bench task</text>
+            </g>
+            <g class="node selected" data-node="scheduler" tabindex="0" role="button" aria-label="宿主机调度器，点击查看详情">
+              <rect x="203" y="164" width="140" height="92" rx="12"/>
+              <text class="node-title" x="273" y="203">宿主机调度器</text>
+              <text class="node-subtitle" x="273" y="224">batch / run / grade</text>
+            </g>
+            <g class="node node-mint" data-node="worker" tabindex="0" role="button" aria-label="Worker Docker，点击查看详情">
+              <rect x="406" y="144" width="142" height="91" rx="12"/>
+              <text class="node-title" x="477" y="183">Worker Docker</text>
+              <text class="node-subtitle" x="477" y="205">Agent 修复代码</text>
+            </g>
+            <g class="node node-mint" data-node="proxy" tabindex="0" role="button" aria-label="宿主机模型代理，点击查看详情">
+              <rect x="382" y="344" width="196" height="91" rx="12"/>
+              <text class="node-title" x="480" y="383">宿主机模型代理</text>
+              <text class="node-subtitle" x="480" y="405">Provider 与密钥留在这里</text>
+            </g>
+            <g class="node node-rose" data-node="grader" tabindex="0" role="button" aria-label="Grader Docker，点击查看详情">
+              <rect x="651" y="144" width="142" height="91" rx="12"/>
+              <text class="node-title" x="722" y="183">Grader Docker</text>
+              <text class="node-subtitle" x="722" y="205">独立测试判分</text>
+            </g>
+            <g class="node" data-node="results" tabindex="0" role="button" aria-label="持久化结果目录，点击查看详情">
+              <rect x="772" y="345" width="110" height="91" rx="12"/>
+              <text class="node-title" x="827" y="380">结果目录</text>
+              <text class="node-subtitle" x="827" y="402">可复查产物</text>
+            </g>
+          </svg>
+        </div>
+
+        <aside class="card detail-card" aria-live="polite">
+          <div class="detail-kicker" id="detail-kicker">当前节点</div>
+          <h2 id="detail-title">宿主机调度器</h2>
+          <p id="detail-description">它像项目经理：读取固定任务，准备独立工作区，先安排 Agent 做题，再安排 Grader 判卷。</p>
+          <ul class="io-list" id="detail-io"></ul>
+          <button id="detail-toggle" type="button" aria-expanded="false">查看实现细节</button>
+          <div class="implementation" id="implementation" hidden></div>
+        </aside>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="docker-title">
+      <h2 id="docker-title">Docker：这里到底帮了什么忙？</h2>
+      <p class="section-note">Docker 不是一台虚拟电脑，而是一种把进程、依赖和文件权限边界打包起来的运行方式。这里的目的，是让 Agent 与评分测试都在可重复、可清理的环境中执行。</p>
+      <div class="concept-grid">
+        <article class="card concept">
+          <h3>1. 镜像（image）</h3>
+          <p>镜像是可复用的“运行环境模板”。SWE-bench 为具体仓库准备 Python、依赖和基础系统；Worker 镜像再加入你的 Agent 运行代码。</p>
+        </article>
+        <article class="card concept">
+          <h3>2. 容器（container）</h3>
+          <p>容器是镜像启动后的“一次性实例”。每题会运行 Worker，再运行 Grader；任务结束后容器删除，避免上一题残留影响下一题。</p>
+        </article>
+        <article class="card concept">
+          <h3>3. bind mount（目录映射）</h3>
+          <p>把宿主机指定的工作区映射到容器内。容器在里面修改代码，实际文件仍落在宿主机；容器删掉后，补丁、日志和结果仍可复查。</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="boundary-title">
+      <h2 id="boundary-title">安全与公平边界</h2>
+      <p class="section-note">评测不只是“跑通测试”。还要确保 Agent 只能依据公开题目与仓库自行修复，不能拿到答案，也不能拿到宿主机密钥。</p>
+      <div class="boundary-grid">
+        <article class="card boundary visible">
+          <h3>Agent 可见</h3>
+          <p>公开 <code>problem_statement</code>、本题 checkout 后的工作区、工具输出，以及自己的历史会话。它可以读写这个任务工作区并在 Worker 内运行命令。</p>
+        </article>
+        <article class="card boundary hidden-boundary">
+          <h3>Agent 不可见</h3>
+          <p>gold patch、隐藏测试、Provider API key 和宿主机其他目录。Worker 默认使用 <code>--network none</code>，也不能直接访问外网。</p>
+        </article>
+        <article class="card boundary host">
+          <h3>宿主机保留</h3>
+          <p>Provider 配置与密钥、模型代理、任务调度、最终汇总和持久化结果。宿主机负责把模型能力安全地提供给 Worker，而不把凭据交出去。</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="timeline-title">
+      <h2 id="timeline-title">一题的生命周期</h2>
+      <p class="section-note">下面按时间看同一题如何走完整条链路。容器可以销毁，但工作区和结果不会丢，因为它们在宿主机的挂载目录中。</p>
+      <div class="timeline">
+        <article class="card step"><span class="step-number">1</span><h3>加载任务</h3><p>从固定 SWE-bench 数据集读取实例 ID、仓库、base commit 和公开问题描述。</p></article>
+        <article class="card step"><span class="step-number">2</span><h3>准备工作区</h3><p>以 base commit 创建独立 checkout。每题一份，题目之间不共享修改。</p></article>
+        <article class="card step"><span class="step-number">3</span><h3>Worker 修复</h3><p>容器内的 ReActAgent 阅读代码、调用工具、修改工作区、运行必要验证。</p></article>
+        <article class="card step"><span class="step-number">4</span><h3>收集过程</h3><p>保存最终 diff、工具轨迹、token、会话 SQLite 与 Agent 日志，方便之后分析“为什么成功或失败”。</p></article>
+        <article class="card step"><span class="step-number">5</span><h3>Grader 判卷</h3><p>另一容器运行 SWE-bench 规定的 FAIL_TO_PASS 与 PASS_TO_PASS 测试，检查修复和回归。</p></article>
+        <article class="card step"><span class="step-number">6</span><h3>汇总与清理</h3><p>写入任务级结果与 <code>summary.json</code>，停止 Worker 和 Grader 容器；结果目录继续保留。</p></article>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="meaning-title">
+      <h2 id="meaning-title">两个评分指标，怎样读？</h2>
+      <div class="truth">
+        <strong>FAIL_TO_PASS</strong>：本来失败、且与题目目标直接相关的测试，修复后是否通过。<br>
+        <strong>PASS_TO_PASS</strong>：本来就通过的回归测试，修改后是否仍保持通过。<br>
+        <strong>resolved</strong>：通常要求前者全部通过、后者没有回归，并且补丁可被正确应用。它才是“这题完整解决”的最终结论。
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="source-title">
+      <h2 id="source-title">想继续对照代码，可以从这里开始</h2>
+      <ul class="source-list">
+        <li><code>scripts/swebench/batch_task.ts</code>：串行调度多个任务并写出 <code>summary.json</code>。</li>
+        <li><code>scripts/swebench/run_task.ts</code>：准备工作区、启动 Worker、收集 diff 和过程结果。</li>
+        <li><code>eval/swebench/docker_sandbox.ts</code>：构造 Docker 容器、挂载目录、关闭网络、传递 stdin/stdout。</li>
+        <li><code>eval/swebench/worker.ts</code>：容器内创建 Session、工具和 ReActAgent。</li>
+        <li><code>scripts/swebench/grade_task.ts</code>：交给 SWE-bench Grader 运行隐藏评测并解析结论。</li>
+      </ul>
+    </section>
+  </main>
+
+  <script>
+    const nodes = {
+      task: {
+        kicker: "输入",
+        title: "任务清单",
+        description: "它是固定题库中的一题，而不是随意的一段需求。为了可重复比较，每题都指定了要评测的仓库版本和公开问题描述。",
+        io: [["接收", "instance_id、repo、base_commit、公开 problem_statement"], ["交出", "给调度器的任务元数据"], ["关键点", "gold patch 与隐藏测试不交给 Agent"]],
+        details: "<h3>实现细节</h3><ul><li>数据集字段中，<code>base_commit</code> 决定从哪个历史版本开始修。</li><li><code>problem_statement</code> 是 Agent 唯一应该依据的题面。</li><li>答案补丁与隐藏测试只在评分阶段使用，防止“看答案写代码”。</li></ul>"
+      },
+      scheduler: {
+        kicker: "编排",
+        title: "宿主机调度器",
+        description: "它像项目经理：读取固定任务，准备独立工作区，先安排 Agent 做题，再安排 Grader 判卷。它不替 Agent 修改业务代码。",
+        io: [["接收", "任务清单、镜像名、结果根目录、最大步数"], ["交出", "隔离工作区、Worker 输入、任务级汇总"], ["关键点", "批次按任务串行，避免资源和日志混在一起"]],
+        details: "<h3>实现细节</h3><ul><li><code>batch_task.ts</code> 负责批次循环；<code>run_task.ts</code> 负责单题运行。</li><li>每题从指定 <code>base_commit</code> 创建工作区，避免前题补丁污染后题。</li><li>每题的 run 和 grade 产物写到不同目录，再由批次写入 <code>summary.json</code>。</li></ul>"
+      },
+      worker: {
+        kicker: "执行",
+        title: "Worker Docker",
+        description: "这是 Agent 真正“干活”的地方。容器内运行 ReActAgent，读写本题代码、调用工具、运行命令；它看到的是一份受限的任务工作区。",
+        io: [["接收", "公开题目 + 本题工作区"], ["交出", "代码改动、最终回答、token、工具轨迹与会话"], ["关键点", "命令在容器内执行，不是在你的宿主机终端直接执行"]],
+        details: "<h3>实现细节</h3><ul><li>工作区挂到 <code>/testbed</code>；过程产物挂到 <code>/results</code>。</li><li><code>run_command</code> 使用容器命令执行器；默认 <code>--network none</code>，阻止外网访问。</li><li>模型调用不带 API key：Worker 经 stdin/stdout 向宿主机模型代理发送请求。</li><li>可复查过程包括 <code>run/session.sqlite</code> 与 <code>run/agent.log</code>。</li></ul>"
+      },
+      proxy: {
+        kicker: "模型能力",
+        title: "宿主机模型代理",
+        description: "Worker 需要模型推理能力，但不应得到你的 Provider 密钥。模型代理就是这层隔离：它在宿主机持有配置，并把请求结果安全回传给 Worker。",
+        io: [["接收", "Worker 的模型请求（含上下文与工具定义）"], ["交出", "模型的文字、reasoning、工具调用和 token 用量"], ["关键点", "Provider 配置和 API key 从不进入 Docker 容器"]],
+        details: "<h3>实现细节</h3><ul><li>Worker 使用 stdio Responses Client；宿主机转发给当前项目配置的 Provider。</li><li>容器环境变量只包含非敏感执行参数，不包含 API key 与代理凭据。</li><li>因此即使 Worker 内命令被绕过，模型密钥也不在它的进程环境中。</li></ul>"
+      },
+      grader: {
+        kicker: "判分",
+        title: "Grader Docker",
+        description: "它不是 Agent 自己的“我测过了，所以应该行”。Grader 是独立的判卷环境，用评测基准规定的测试判断补丁是否真的解决问题、有没有带来回归。",
+        io: [["接收", "Agent 改过的工作区 + SWE-bench 测试规则"], ["交出", "FAIL_TO_PASS、PASS_TO_PASS、resolved、评分日志"], ["关键点", "Grader 与 Worker 分开运行，评分不依赖 Agent 的自述"]],
+        details: "<h3>实现细节</h3><ul><li>评分日志保存在 <code>grade/eval.log</code>。</li><li>FAIL_TO_PASS 检查目标失败测试是否修复；PASS_TO_PASS 检查原来正常的测试是否被改坏。</li><li>只有完整满足基准规则，才得到 <code>resolved: true</code>。</li></ul>"
+      },
+      results: {
+        kicker: "沉淀",
+        title: "结果目录",
+        description: "容器是临时的，结果目录不是。它在宿主机上持久保存，让你之后能打开失败题的会话、Agent 日志、评分日志和补丁，分析下一轮该改 Agent 的哪里。",
+        io: [["接收", "run 过程、grade 过程、最终判分"], ["交出", "可视化页面、AI 分析、版本间对比的证据"], ["关键点", "这是“功能改进 → 评测 → 反馈”的闭环数据基础"]],
+        details: "<h3>实现细节</h3><ul><li>每题通常有 <code>run/session.sqlite</code>、<code>run/agent.log</code> 与 <code>grade/eval.log</code>。</li><li>任务级结果包含 diff、token 用量、耗时、测试状态等；批次根目录有 <code>summary.json</code>。</li><li>使用项目内持久化 <code>eval-results/</code>，不要依赖会在重启后清理的 <code>/tmp</code>。</li></ul>"
+      }
+    };
+
+    const title = document.getElementById("detail-title");
+    const kicker = document.getElementById("detail-kicker");
+    const description = document.getElementById("detail-description");
+    const io = document.getElementById("detail-io");
+    const implementation = document.getElementById("implementation");
+    const toggle = document.getElementById("detail-toggle");
+    let selectedNode = "scheduler";
+    let detailsOpen = false;
+
+    function renderNode() {
+      const data = nodes[selectedNode];
+      kicker.textContent = data.kicker;
+      title.textContent = data.title;
+      description.textContent = data.description;
+      io.innerHTML = data.io.map(([label, value]) => `<li><strong>${label}</strong>${value}</li>`).join("");
+      implementation.innerHTML = data.details;
+      implementation.hidden = !detailsOpen;
+      toggle.textContent = detailsOpen ? "收起实现细节" : "查看实现细节";
+      toggle.setAttribute("aria-expanded", String(detailsOpen));
+      document.querySelectorAll(".node").forEach((node) => node.classList.toggle("selected", node.dataset.node === selectedNode));
+    }
+
+    function selectNode(nodeId) {
+      selectedNode = nodeId;
+      detailsOpen = false;
+      renderNode();
+    }
+
+    function toggleDetails() {
+      detailsOpen = !detailsOpen;
+      renderNode();
+    }
+
+    document.querySelectorAll(".node").forEach((node) => {
+      node.addEventListener("click", () => selectNode(node.dataset.node));
+      node.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          selectNode(node.dataset.node);
+        }
+      });
+    });
+    toggle.addEventListener("click", toggleDetails);
+    renderNode();
+  </script>
+</body>
+</html>

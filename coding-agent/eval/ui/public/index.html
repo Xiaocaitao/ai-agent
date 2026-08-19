@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Eval Lab · Coding Agent</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-mark">✦</span><div><strong>Eval Lab</strong><small>Coding Agent</small></div></div>
+      <div class="side-caption">EVALUATION LOOP</div>
+      <nav>
+        <button class="nav-item active" data-view="dashboard"><span>◈</span> 总览</button>
+        <button class="nav-item" data-view="history"><span>↺</span> 历史评测</button>
+      </nav>
+      <div class="sidebar-foot"><span class="status-dot" id="health-dot"></span><span id="health-text">正在检查环境</span></div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div><div class="eyebrow">HARNESS OBSERVABILITY</div><h1 id="page-title">评测总览</h1></div>
+        <div class="top-meta"><span class="pill" id="provider-pill">Provider · --</span><button class="ghost" id="refresh-btn">刷新</button></div>
+      </header>
+
+      <section id="dashboard-view" class="view active">
+        <div class="hero-grid">
+          <section class="panel launch-panel">
+            <div class="panel-heading"><div><div class="eyebrow">NEW RUN</div><h2>开启一次评测</h2></div><span class="spark">✦</span></div>
+            <p class="muted">复用现有 Docker Worker、官方 Grader 和 provider。运行过程中可实时查看轨迹。</p>
+            <form id="run-form" class="form-grid">
+              <label class="wide">Tasks JSON / JSONL <input required id="tasks" name="tasks" placeholder="/tmp/swebench-sympy-20.json" /></label>
+              <label>Repo root <input required id="repoRoot" name="repoRoot" placeholder="/tmp/sympy" /></label>
+              <label>Docker image <input required id="image" name="image" value="coding-agent-worker:sympy-env" /></label>
+              <label>Python <input required id="python" name="python" placeholder="/path/to/.swebench-venv/bin/python" /></label>
+              <label>Workspaces root <input required id="workspaces" name="workspaces" placeholder="/tmp/swebench-workspaces" /></label>
+              <label>Results root <input required id="results" name="results" value="/tmp/swebench-results" placeholder="/tmp/swebench-results" /></label>
+              <label>Max steps <input id="maxSteps" name="maxSteps" type="number" min="1" max="100" value="100" /></label>
+              <div class="form-actions wide"><button class="primary" type="submit" id="start-btn"><span>▶</span> 开始评测</button><span class="form-hint" id="form-status">结果会按 runId 隔离保存</span></div>
+            </form>
+          </section>
+          <section class="panel live-panel">
+            <div class="panel-heading"><div><div class="eyebrow">LIVE RUN</div><h2>当前运行</h2></div><span class="live-badge" id="live-badge">IDLE</span></div>
+            <div id="live-empty" class="empty-state"><span class="empty-icon">◌</span><strong>还没有运行中的评测</strong><span>从左侧开始一轮新的评测</span></div>
+            <div id="live-content" class="hidden"><div class="run-title-row"><strong id="live-run-id">--</strong><span id="live-phase">准备中</span></div><div class="progress"><i id="progress-bar"></i></div><div class="progress-meta"><span id="progress-label">0 / 0 tasks</span><span id="progress-time">--</span></div><div class="live-log" id="live-log"></div></div>
+          </section>
+        </div>
+
+        <section class="metric-grid" id="metrics"><div class="metric"><span>Resolved rate</span><strong>--</strong><small>等待评测</small></div><div class="metric"><span>FAIL → PASS</span><strong>--</strong><small>平均通过率</small></div><div class="metric"><span>PASS → PASS</span><strong>--</strong><small>回归稳定性</small></div><div class="metric"><span>Tasks</span><strong>--</strong><small>本轮任务数</small></div></section>
+        <section class="panel recent-panel"><div class="panel-heading"><div><div class="eyebrow">RECENT SIGNALS</div><h2>最近评测</h2></div><button class="text-button" data-view="history">查看全部 →</button></div><div id="recent-list" class="run-list"></div></section>
+      </section>
+
+      <section id="history-view" class="view">
+        <section class="panel"><div class="panel-heading"><div><div class="eyebrow">ARCHIVE</div><h2>历史评测</h2></div><span class="muted">只读记录 · session / grader logs</span></div><div id="history-list" class="run-list"></div></section>
+      </section>
+
+      <section id="detail-view" class="view">
+        <button class="back-button" id="back-btn">← 返回列表</button>
+        <div class="detail-header"><div><div class="eyebrow">EVALUATION RUN</div><h2 id="detail-run-id">--</h2><span class="muted" id="detail-created">--</span></div><button class="primary small" id="analyze-btn">✦ 总分析 / 改进报告</button></div>
+        <div class="metric-grid" id="detail-metrics"></div>
+        <section class="panel behavior-panel hidden" id="behavior-panel"><div class="panel-heading"><div><div class="eyebrow">AGENT BEHAVIOR</div><h2>行为指标</h2></div><span class="muted">来自每题 metrics</span></div><div id="behavior-metrics" class="metric-grid behavior-grid"></div><div id="behavior-tools" class="tool-breakdown"></div></section>
+        <div class="detail-grid"><section class="panel task-panel"><div class="panel-heading"><h2>Tasks</h2><span class="muted" id="detail-task-count">--</span></div><div id="task-list" class="task-list"></div></section><section class="panel analysis-panel"><div class="panel-heading"><div><div class="eyebrow">MODEL REVIEW</div><h2>AI 分析</h2></div><span class="live-badge" id="analysis-status">READY</span></div><details class="analysis-reasoning" id="analysis-reasoning-panel"><summary>分析过程</summary><pre id="analysis-reasoning"></pre></details><div id="analysis-output" class="markdown muted">点击右上角「AI 分析」，让当前 provider 总结失败模式和下一轮改进建议。</div></section></div>
+        <section class="panel task-detail-panel hidden" id="task-detail-panel"><div class="panel-heading"><div><div class="eyebrow">TASK TRACE</div><h2 id="task-detail-title">--</h2></div><div class="task-actions"><button class="primary small" id="task-analyze-btn">✦ 分析此任务</button><button class="ghost" id="close-task">关闭</button></div></div><div class="task-tabs"><button class="tab active" data-tab="session">Session</button><button class="tab" data-tab="agent">Agent log</button><button class="tab" data-tab="grader">Grader log</button></div><pre id="task-detail-content" class="trace-box"></pre><div class="task-analysis"><div class="panel-heading"><div class="eyebrow">TASK REVIEW</div><span class="live-badge" id="task-analysis-status">READY</span></div><details class="analysis-reasoning" id="task-analysis-reasoning-panel"><summary>分析过程</summary><pre id="task-analysis-reasoning"></pre></details><div id="task-analysis-output" class="markdown muted">点击「分析此任务」，查看该题的失败根因和下一步验证建议。</div></div></section>
+      </section>
+    </main>
+  </div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

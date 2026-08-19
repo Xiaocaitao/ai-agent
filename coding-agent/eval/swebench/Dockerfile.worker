@@ -1,0 +1,36 @@
+ARG SWE_BENCH_BASE_IMAGE=node:22-bookworm-slim
+ARG SWE_BENCH_PLATFORM=linux/amd64
+
+# 默认使用 Node 镜像；正式 SWE-bench 运行时把这里替换为官方 env image。
+FROM --platform=${SWE_BENCH_PLATFORM} ${SWE_BENCH_BASE_IMAGE} AS worker-base
+FROM --platform=${SWE_BENCH_PLATFORM} node:22-bookworm-slim AS node-runtime
+FROM worker-base
+
+# 官方 Python env image 通常没有 Node；只复制 Node/npm，不改变其 Python 依赖环境。
+COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
+COPY --from=node-runtime /usr/local/lib/node_modules /usr/local/lib/node_modules
+RUN ln -sf /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+  && ln -sf /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
+
+WORKDIR /opt/coding-agent
+
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --no-audit --no-fund
+
+# 只复制 Worker 运行所需文件；不复制 config/settings.toml、本地凭据、日志或 git 元数据。
+COPY file_change_tracker.ts ./file_change_tracker.ts
+COPY sqlite.ts ./sqlite.ts
+COPY session ./session
+COPY runtime ./runtime
+COPY tools ./tools
+COPY config/tools.json ./config/tools.json
+COPY config/prompts.toml ./config/prompts.toml
+COPY config/prompts ./config/prompts
+COPY eval/swebench/container_executor.ts ./eval/swebench/container_executor.ts
+COPY eval/swebench/model_proxy.ts ./eval/swebench/model_proxy.ts
+COPY eval/swebench/types.ts ./eval/swebench/types.ts
+COPY eval/swebench/worker.ts ./eval/swebench/worker.ts
+
+RUN mkdir -p /workspace /testbed /results
+
+CMD ["sleep", "infinity"]
